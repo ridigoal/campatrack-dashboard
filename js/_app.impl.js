@@ -460,10 +460,25 @@ function syncConsumoFromRecords() {
   });
 }
 
-function aggregatePlanningMonthlyByDimension() {
+function planningRecordOverlapsYmdRange(rangeStart, rangeEnd, desdeStr, hastaStr) {
+  const ds = desdeStr ? parseDateInput(desdeStr) : null;
+  const de = hastaStr ? parseDateInput(hastaStr) : null;
+  if (ds && rangeEnd < ds) return false;
+  if (de && rangeStart > de) return false;
+  return true;
+}
+
+/**
+ * Agrega inversión mensual del Planning por dimensión.
+ * @param {{ desde?: string, hasta?: string }} [dateFilter] Si se indica `desde` y/o `hasta` (YYYY-MM-DD), solo cuenta campañas cuyo rango intersecta el filtro.
+ */
+function aggregatePlanningMonthlyByDimension(dateFilter) {
   const byTipo = new Map();
   const byPlataforma = new Map();
   const byIntake = new Map();
+  const desdeStr = dateFilter && String(dateFilter.desde || "").trim();
+  const hastaStr = dateFilter && String(dateFilter.hasta || "").trim();
+  const useDateFilter = Boolean(desdeStr || hastaStr);
 
   const addTo = (map, key, monthIdx, val) => {
     const k = String(key || "—").trim() || "—";
@@ -476,6 +491,7 @@ function aggregatePlanningMonthlyByDimension() {
     const s = parseDateInput(rec.fechaInicio);
     const e = parseDateInput(rec.fechaFin);
     if (!s || !e) return;
+    if (useDateFilter && !planningRecordOverlapsYmdRange(s, e, desdeStr, hastaStr)) return;
     for (let y = s.getFullYear(); y <= e.getFullYear(); y += 1) {
       const { monthlyInvestment } = computeMonthlyArraysForRecordWithOverrides(rec, y);
       for (let m = 0; m < 12; m += 1) {
@@ -491,6 +507,219 @@ function aggregatePlanningMonthlyByDimension() {
   return { byTipo, byPlataforma, byIntake };
 }
 
+function getCcChartDateFilterFromDom() {
+  const desde = document.getElementById("ccFilterDesde")?.value?.trim() ?? "";
+  const hasta = document.getElementById("ccFilterHasta")?.value?.trim() ?? "";
+  return { desde, hasta };
+}
+
+function syncCcAgrupadorFilterOptions() {
+  const sel = document.getElementById("ccFilterAgrupador");
+  if (!sel) return;
+  const cur = sel.value;
+  const keys = [
+    ...new Set(
+      centrosCostos
+        .map((c) => getCentroCostoKey(c))
+        .filter((k) => String(k).trim())
+    )
+  ].sort((a, b) => a.localeCompare(b, "es"));
+  sel.innerHTML =
+    `<option value="">${escapeHtml("Todos")}</option>` +
+    keys.map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
+  if (keys.includes(cur)) sel.value = cur;
+}
+
+function centroCostoPasaFiltrosTabla(cc, used, inversionTotal) {
+  const agrSel = document.getElementById("ccFilterAgrupador")?.value?.trim() ?? "";
+  const estSel = document.getElementById("ccFilterEstado")?.value?.trim() ?? "";
+  const key = getCentroCostoKey(cc);
+  if (agrSel && key !== agrSel) return false;
+  const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
+  const riesgo = inversionTotal > 0 && pct > 90;
+  if (estSel === "riesgo" && !riesgo) return false;
+  if (estSel === "ok" && riesgo) return false;
+  return true;
+}
+
+function closeAllCcUiDropdowns() {
+  document.querySelectorAll("#costCenterModule .cc-dropdown-panel").forEach((p) => {
+    p.hidden = true;
+  });
+  document.querySelectorAll("#costCenterModule .cc-more-actions-btn").forEach((b) => {
+    b.setAttribute("aria-expanded", "false");
+  });
+  document.querySelectorAll("#costCenterModule .cc-row-menu-btn").forEach((b) => {
+    b.setAttribute("aria-expanded", "false");
+  });
+}
+
+function renderCcKpiStrip() {
+  let totalInv = 0;
+  let totalUsed = 0;
+  let riesgoCount = 0;
+  centrosCostos.forEach((cc) => {
+    const inv = Number(cc.inversionTotal) || 0;
+    const used = getUsedInversionCentro(cc.id, null);
+    totalInv += inv;
+    totalUsed += used;
+    const pct = inv > 0 ? (used / inv) * 100 : 0;
+    if (inv > 0 && pct > 90) riesgoCount += 1;
+  });
+  const saldo = Math.max(0, totalInv - totalUsed);
+  const pctExec = totalInv > 0 ? (totalUsed / totalInv) * 100 : 0;
+  const pctSaldo = totalInv > 0 ? (saldo / totalInv) * 100 : 0;
+
+  const setTxt = (id, t) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = t;
+  };
+  setTxt("ccKpiPresupuestoTotal", formatMoneyCc(totalInv) || "$0");
+  setTxt("ccKpiInversionUsada", formatMoneyCc(totalUsed) || "$0");
+  setTxt("ccKpiSaldo", formatMoneyCc(saldo) || "$0");
+  setTxt("ccKpiEjecucionPct", `${pctExec.toFixed(2)}%`);
+  setTxt("ccKpiCentrosRiesgo", String(riesgoCount));
+  setTxt("ccKpiInversionUsadaSub", `${pctExec.toFixed(2)}% del presupuesto`);
+  setTxt("ccKpiSaldoSub", `${pctSaldo.toFixed(2)}% disponible`);
+
+  const barUsada = document.getElementById("ccKpiBarUsada");
+  const barSaldo = document.getElementById("ccKpiBarSaldo");
+  const barEjec = document.getElementById("ccKpiBarEjecucion");
+  if (barUsada) barUsada.style.width = `${Math.min(100, pctExec)}%`;
+  if (barSaldo) barSaldo.style.width = `${Math.min(100, pctSaldo)}%`;
+  if (barEjec) barEjec.style.width = `${Math.min(100, pctExec)}%`;
+}
+
+/**
+ * Agrupa filas de plataforma del Planning en Google / Meta / (Otros si aplica),
+ * manteniendo desglose mensual por columna.
+ */
+function mergeCcPlataformaMapByFamilia(byPlataforma) {
+  const google = Array.from({ length: 12 }, () => 0);
+  const meta = Array.from({ length: 12 }, () => 0);
+  const otros = Array.from({ length: 12 }, () => 0);
+  if (!byPlataforma || byPlataforma.size === 0) return new Map();
+  for (const [platKey, row] of byPlataforma.entries()) {
+    const fam = dashPlataformaFamilyKey(platKey);
+    for (let m = 0; m < 12; m += 1) {
+      const v = Number(row[m]) || 0;
+      if (fam === "google") google[m] += v;
+      else if (fam === "meta") meta[m] += v;
+      else otros[m] += v;
+    }
+  }
+  const out = new Map();
+  out.set("Google", google);
+  out.set("Meta", meta);
+  if (otros.some((x) => Number(x) > 0)) out.set("Otros", otros);
+  return out;
+}
+
+function sortCcIntakeKeysForSummary(keys) {
+  const rank = (k) => {
+    const s = String(k ?? "").trim();
+    const m1 = /^intake\s*(\d+)/i.exec(s);
+    if (m1) return Number(m1[1]);
+    const m2 = /^(\d+)$/.exec(s);
+    if (m2) return Number(m2[1]);
+    return 1e6;
+  };
+  return [...keys].sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    return String(a).localeCompare(String(b), "es");
+  });
+}
+
+function exportCcCentrosCostosCsv() {
+  const escCsv = (v) => {
+    const s = String(v ?? "").replace(/"/g, '""');
+    return `"${s}"`;
+  };
+  const lines = [
+    [
+      "Agrupador",
+      "Nombre del proyecto",
+      "Nombre de la cuenta",
+      "Descripción del servicio / item",
+      "Inversión total",
+      "Inversión usada",
+      "Saldo",
+      "% usado",
+      "Estado"
+    ].join(",")
+  ];
+  centrosCostos.forEach((cc) => {
+    const used = getUsedInversionCentro(cc.id, null);
+    const inversionTotal = Number(cc.inversionTotal) || 0;
+    const saldo = Math.max(0, inversionTotal - used);
+    if (!centroCostoPasaFiltrosTabla(cc, used, inversionTotal)) return;
+    const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
+    const riesgo = inversionTotal > 0 && pct > 90;
+    lines.push(
+      [
+        escCsv(cc.agrupador),
+        escCsv(cc.nombreProyecto),
+        escCsv(cc.nombreCuenta),
+        escCsv(cc.descripcionServicio),
+        escCsv(inversionTotal),
+        escCsv(formatMoneyCc(used) || "$0"),
+        escCsv(formatMoneyCc(saldo) || "$0"),
+        escCsv(`${pct.toFixed(2)}%`),
+        escCsv(riesgo ? "RIESGO" : "OK")
+      ].join(",")
+    );
+  });
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `centro_de_costos_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function runDeleteCentroCostoFlowForId(ccId) {
+  if (!ccId) return;
+  const cc = centrosCostos.find((c) => String(c.id) === String(ccId));
+  if (!cc) return;
+
+  const linked = getRecordsLinkedToCentroCostoRow(cc);
+  if (!linked.length) {
+    finalizeDeleteCentroCostoRow(cc.id);
+    return;
+  }
+
+  const continuar = await showAppDialog({
+    message:
+      "Este Centro de Costos tiene campañas asociadas.\nSi lo eliminas, deberás reasignar esos consumos a otro Centro de Costos.\n¿Deseas continuar?",
+    primaryText: "Confirmar",
+    secondaryText: "Cancelar",
+    showSecondary: true,
+    primaryDanger: false
+  });
+  if (!continuar) return;
+
+  const nuevoKey = await showCcReassignDialog(cc.id);
+  if (!nuevoKey) return;
+
+  const normalized = normalizeCentroCostoSelectionValue(nuevoKey);
+  if (!normalized || !resolveCentroCostoByValue(normalized)) {
+    await showAppDialog({
+      message: "El centro de costos elegido no es válido.",
+      showSecondary: false,
+      primaryText: "Cerrar"
+    });
+    return;
+  }
+
+  linked.forEach((r) => {
+    r.centroCostoId = normalized;
+  });
+  rebuildPlanningTable();
+  persistPlanningData();
+  finalizeDeleteCentroCostoRow(cc.id);
+}
+
 /**
  * Tablas de resumen bajo Centro de costos: agregan inversión mensual del PLANNING
  * (computeMonthlyArraysForRecordWithOverrides → monthlyInvestment), por dimensión.
@@ -500,20 +729,35 @@ function renderCcSummaryTable(el, map, opts) {
   const colLabel = String(opts?.colLabel || "Dimensión");
   const captionText = String(opts?.caption || "Resumen Planning");
   const theme = String(opts?.theme || "tipo");
+  const omitCaption = opts?.omitCaption === true;
   const TYPE_LABELS = {
-    MA: "Maestria",
-    SE: "Segundas Especialidades",
+    MA: "Maestría",
+    SE: "Segundas especialidades",
     DI: "Diplomados",
     MBA: "MBA",
-    PE: "Programa de Especializacion",
-    DO: "Doctorado"
+    PE: "Programa de especialización",
+    DO: "Doctorado",
+    ALCANCE: "Alcance",
+    CHARLA: "Charla",
+    WEBINAR: "Webinar"
   };
   const isTipoTable = String(colLabel).toLowerCase() === "tipo";
+  const isIntakeTable = String(colLabel).toLowerCase() === "intake";
   el.classList.toggle("cc-planning-summary--tipo", isTipoTable);
-  const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b, "es"));
+  el.classList.toggle("cc-analytic-monthly-table", Boolean(opts?.analyticStyle));
+  let keys = Array.from(map.keys());
+  if (opts?.preserveKeyOrder) {
+    /* orden de inserción del Map (p. ej. Google → Meta → Otros) */
+  } else if (isIntakeTable) {
+    keys = sortCcIntakeKeysForSummary(keys);
+  } else {
+    keys.sort((a, b) => a.localeCompare(b, "es"));
+  }
   const monthlyTotals = Array.from({ length: 12 }, () => 0);
   const colCount = 14;
-  const caption = `<caption class="cc-ps-caption cc-ps-caption--${escapeHtml(theme)}">${escapeHtml(captionText)}</caption>`;
+  const caption = omitCaption
+    ? ""
+    : `<caption class="cc-ps-caption cc-ps-caption--${escapeHtml(theme)}">${escapeHtml(captionText)}</caption>`;
   const head =
     `${caption}<thead><tr><th scope="col" class="cc-ps-th cc-ps-th-dim">` +
     escapeHtml(colLabel) +
@@ -570,30 +814,54 @@ function renderCentroCostosMainTable() {
       const used = getUsedInversionCentro(cc.id, null);
       const inversionTotal = Number(cc.inversionTotal) || 0;
       const saldo = Math.max(0, inversionTotal - used);
+      const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
+      const riesgo = inversionTotal > 0 && pct > 90;
+      if (!centroCostoPasaFiltrosTabla(cc, used, inversionTotal)) return "";
       totalInversion += inversionTotal;
       totalUsed += used;
       totalSaldo += saldo;
       const idEsc = escapeHtml(cc.id);
+      const pctStr = `${pct.toFixed(2)}%`;
+      let barClass = "cc-pct-bar-fill";
+      if (pct > 90) barClass += " cc-pct-bar-fill--risk";
+      else if (pct > 70) barClass += " cc-pct-bar-fill--warn";
+      const badge = riesgo
+        ? `<span class="cc-badge cc-badge--riesgo">RIESGO</span>`
+        : `<span class="cc-badge cc-badge--ok">OK</span>`;
       return `<tr data-cc-id="${idEsc}">
         <td contenteditable="true" class="cc-editable" data-cc-field="agrupador">${escapeHtml(cc.agrupador)}</td>
-        <td contenteditable="true" class="cc-editable" data-cc-field="nombreProyecto">${escapeHtml(cc.nombreProyecto)}</td>
-        <td contenteditable="true" class="cc-editable" data-cc-field="nombreCuenta">${escapeHtml(cc.nombreCuenta)}</td>
         <td contenteditable="true" class="cc-editable" data-cc-field="descripcionServicio">${escapeHtml(cc.descripcionServicio)}</td>
         <td contenteditable="true" class="cc-editable cc-td-num" data-cc-field="inversionTotal">${escapeHtml(String(cc.inversionTotal))}</td>
         <td class="cc-td-num cc-td-readonly">${escapeHtml(formatMoneyCc(used) || "$0")}</td>
         <td class="cc-td-num cc-td-readonly cc-td-saldo">${escapeHtml(formatMoneyCc(saldo) || "$0")}</td>
+        <td class="cc-td-num cc-pct-cell">
+          <div class="cc-pct-wrap">
+            <div class="cc-pct-bar-track" aria-hidden="true"><span class="${barClass}" style="width:${Math.min(100, pct)}%"></span></div>
+            <span>${escapeHtml(pctStr)}</span>
+          </div>
+        </td>
+        <td>${badge}</td>
+        <td class="cc-td-actions" data-cc-stop-row-select>
+          <div class="cc-dropdown cc-row-dd">
+            <button type="button" class="cc-row-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Acciones para fila"><i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i></button>
+            <div class="cc-dropdown-panel cc-row-dd-panel" role="menu" hidden>
+              <button type="button" class="cc-dropdown-item cc-dropdown-item--danger" data-cc-action="delete" role="menuitem">Eliminar centro</button>
+            </div>
+          </div>
+        </td>
       </tr>`;
     })
+    .filter(Boolean)
     .join("");
 
   const totalRow = `<tr class="cc-total-row">
-      <td>TOTAL</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
+      <td colspan="2"><strong>TOTAL</strong></td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalInversion) || "$0")}</td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalUsed) || "$0")}</td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalSaldo) || "$0")}</td>
+      <td></td>
+      <td></td>
+      <td></td>
     </tr>`;
 
   let tfoot = table.querySelector("tfoot");
@@ -612,33 +880,51 @@ function renderCentroCostosMainTable() {
 function updateCcDeleteRowButtonState() {
   const del = document.getElementById("ccDeleteRowBtn");
   if (del) del.disabled = !selectedCcRowId;
+  const moreDel = document.getElementById("ccMoreDeleteBtn");
+  if (moreDel) moreDel.disabled = !selectedCcRowId;
 }
 
 function refreshCentroCostosUI() {
+  syncCcAgrupadorFilterOptions();
+  renderCcKpiStrip();
   renderCentroCostosMainTable();
-  const agg = aggregatePlanningMonthlyByDimension();
+  const agg = aggregatePlanningMonthlyByDimension(getCcChartDateFilterFromDom());
   renderCcSummaryTable(document.getElementById("ccResumenTipo"), agg.byTipo, {
     colLabel: "Tipo",
-    caption: "Por tipo — inversión mensual (Planning)",
-    theme: "tipo"
+    caption: "Por tipo – inversión mensual",
+    theme: "tipo",
+    omitCaption: true,
+    analyticStyle: true
   });
-  renderCcSummaryTable(document.getElementById("ccResumenPlataforma"), agg.byPlataforma, {
+  renderCcSummaryTable(document.getElementById("ccResumenPlataforma"), mergeCcPlataformaMapByFamilia(agg.byPlataforma), {
     colLabel: "Plataforma",
-    caption: "Por plataforma — inversión mensual (Planning)",
-    theme: "plataforma"
+    caption: "Por plataforma – inversión mensual",
+    theme: "plataforma",
+    omitCaption: true,
+    preserveKeyOrder: true,
+    analyticStyle: true
   });
   renderCcSummaryTable(document.getElementById("ccResumenIntake"), agg.byIntake, {
     colLabel: "Intake",
-    caption: "Por intake — inversión mensual (Planning)",
-    theme: "intake"
+    caption: "Por intake – inversión mensual",
+    theme: "intake",
+    omitCaption: true,
+    analyticStyle: true
   });
   populateCentroCostoSelect();
+  const ts = document.getElementById("ccModuleUpdatedAt");
+  if (ts) {
+    try {
+      ts.textContent = `Actualizado: ${new Date().toLocaleString("es-CL")}`;
+    } catch {
+      ts.textContent = "";
+    }
+  }
 }
 
 /**
  * Recálculo global del módulo Centro de Costos:
- * - Re-render tabla principal (bolsas)
- * - Recalcula desde cero las tablas de resumen (por tipo / plataforma / intake)
+ * - Re-render tabla principal (bolsas), KPIs, filtros y tablas analíticas mensuales
  *
  * Debe llamarse tras crear/editar/eliminar campañas o cambiar Centro de Costos.
  */
@@ -685,6 +971,17 @@ function initCentroCostosModule() {
   const deleteBtn = document.getElementById("ccDeleteRowBtn");
   const tbody = document.getElementById("ccMainBody");
   const selCc = document.getElementById("centroCostoSelect");
+  const editBtn = document.getElementById("ccEditRowBtn");
+  const exportBtn = document.getElementById("ccExportBtn");
+  const clearF = document.getElementById("ccClearFiltersBtn");
+  const filtAgr = document.getElementById("ccFilterAgrupador");
+  const filtEst = document.getElementById("ccFilterEstado");
+  const filtDesde = document.getElementById("ccFilterDesde");
+  const filtHasta = document.getElementById("ccFilterHasta");
+  const moreBtn = document.getElementById("ccMoreActionsBtn");
+  const morePanel = document.getElementById("ccMoreActionsPanel");
+  const moreDel = document.getElementById("ccMoreDeleteBtn");
+
   selCc?.addEventListener("change", () => updateCentroCostoSaldoHint());
 
   addBtn?.addEventListener("click", () => {
@@ -701,10 +998,96 @@ function initCentroCostosModule() {
     refreshCentroCostosUI();
   });
 
+  editBtn?.addEventListener("click", () => {
+    if (!selectedCcRowId) return;
+    const rid = String(selectedCcRowId).replace(/["\\]/g, "");
+    const cell = tbody?.querySelector(`tr[data-cc-id="${rid}"] td[data-cc-field="agrupador"]`);
+    if (cell instanceof HTMLElement) {
+      cell.focus();
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  });
+
+  exportBtn?.addEventListener("click", () => exportCcCentrosCostosCsv());
+
+  const onCcFilterChange = () => {
+    refreshCentroCostosUI();
+  };
+  filtAgr?.addEventListener("change", onCcFilterChange);
+  filtEst?.addEventListener("change", onCcFilterChange);
+  filtDesde?.addEventListener("change", onCcFilterChange);
+  filtHasta?.addEventListener("change", onCcFilterChange);
+
+  clearF?.addEventListener("click", () => {
+    if (filtAgr) filtAgr.value = "";
+    if (filtEst) filtEst.value = "";
+    if (filtDesde) filtDesde.value = "";
+    if (filtHasta) filtHasta.value = "";
+    refreshCentroCostosUI();
+  });
+
+  moreBtn?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!morePanel) return;
+    const opening = morePanel.hidden;
+    closeAllCcUiDropdowns();
+    if (opening) {
+      morePanel.hidden = false;
+      moreBtn.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  moreDel?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeAllCcUiDropdowns();
+    void runDeleteCentroCostoFlowForId(selectedCcRowId);
+  });
+
+  document.addEventListener("click", (ev) => {
+    if (!(ev.target instanceof HTMLElement)) return;
+    if (ev.target.closest("#costCenterModule .cc-header-more-dd")) return;
+    if (ev.target.closest("#costCenterModule .cc-row-dd")) return;
+    closeAllCcUiDropdowns();
+  });
+
   tbody?.addEventListener("click", (e) => {
-    const tr = e.target instanceof HTMLElement ? e.target.closest("tbody tr[data-cc-id]") : null;
+    if (!(e.target instanceof HTMLElement)) return;
+    const menuBtn = e.target.closest(".cc-row-menu-btn");
+    if (menuBtn) {
+      e.stopPropagation();
+      const wrap = menuBtn.closest(".cc-dropdown");
+      const panel = wrap?.querySelector(".cc-dropdown-panel");
+      const wasOpen = panel && !panel.hidden;
+      document.querySelectorAll("#costCenterModule .cc-row-dd .cc-dropdown-panel").forEach((p) => {
+        p.hidden = true;
+      });
+      document.querySelectorAll("#costCenterModule .cc-row-menu-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      if (panel && !wasOpen) {
+        panel.hidden = false;
+        menuBtn.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+    const delAct = e.target.closest('[data-cc-action="delete"]');
+    if (delAct) {
+      e.stopPropagation();
+      document.querySelectorAll("#costCenterModule .cc-row-dd .cc-dropdown-panel").forEach((p) => {
+        p.hidden = true;
+      });
+      const tr = delAct.closest("tr[data-cc-id]");
+      const rowId = tr?.getAttribute("data-cc-id");
+      void runDeleteCentroCostoFlowForId(rowId);
+      return;
+    }
+
+    const tr = e.target.closest("tbody tr[data-cc-id]");
     if (!tr) return;
-    const td = e.target instanceof HTMLElement ? e.target.closest("td") : null;
+    if (e.target.closest("[data-cc-stop-row-select]")) return;
+    const td = e.target.closest("td");
     if (td && td.hasAttribute("data-cc-field")) return;
     const id = tr.getAttribute("data-cc-id") || "";
     if (!id) return;
@@ -720,47 +1103,7 @@ function initCentroCostosModule() {
   });
 
   deleteBtn?.addEventListener("click", () => {
-    void (async () => {
-      if (!selectedCcRowId) return;
-      const cc = centrosCostos.find((c) => String(c.id) === String(selectedCcRowId));
-      if (!cc) return;
-
-      const linked = getRecordsLinkedToCentroCostoRow(cc);
-      if (!linked.length) {
-        finalizeDeleteCentroCostoRow(cc.id);
-        return;
-      }
-
-      const continuar = await showAppDialog({
-        message:
-          "Este Centro de Costos tiene campañas asociadas.\nSi lo eliminas, deberás reasignar esos consumos a otro Centro de Costos.\n¿Deseas continuar?",
-        primaryText: "Confirmar",
-        secondaryText: "Cancelar",
-        showSecondary: true,
-        primaryDanger: false
-      });
-      if (!continuar) return;
-
-      const nuevoKey = await showCcReassignDialog(cc.id);
-      if (!nuevoKey) return;
-
-      const normalized = normalizeCentroCostoSelectionValue(nuevoKey);
-      if (!normalized || !resolveCentroCostoByValue(normalized)) {
-        await showAppDialog({
-          message: "El centro de costos elegido no es válido.",
-          showSecondary: false,
-          primaryText: "Cerrar"
-        });
-        return;
-      }
-
-      linked.forEach((r) => {
-        r.centroCostoId = normalized;
-      });
-      rebuildPlanningTable();
-      persistPlanningData();
-      finalizeDeleteCentroCostoRow(cc.id);
-    })();
+    void runDeleteCentroCostoFlowForId(selectedCcRowId);
   });
 
   tbody?.addEventListener("blur", (e) => {
@@ -12494,12 +12837,157 @@ function initCampatrackSidebarToggle() {
   });
 }
 
+/** Tooltips al hover solo con sidebar colapsado (texto del <span> de cada ítem). */
+function initCampatrackSidebarCollapsedTooltips() {
+  const shell = document.getElementById("mainAppShell");
+  const sidebar = document.querySelector(".campatrack-sidebar");
+  if (!shell || !sidebar) return;
+
+  let tip = document.getElementById("campatrackSidebarTooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "campatrackSidebarTooltip";
+    tip.className = "campatrack-sidebar-tooltip";
+    tip.setAttribute("role", "tooltip");
+    tip.setAttribute("aria-hidden", "true");
+    tip.hidden = true;
+    document.body.appendChild(tip);
+  }
+
+  let showTimer = null;
+  let hideTimer = null;
+  let pendingEl = null;
+
+  const isCollapsed = () => shell.classList.contains("campatrack-sidebar-collapsed");
+
+  const hideNow = () => {
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    pendingEl = null;
+    tip.classList.remove("campatrack-sidebar-tooltip--visible");
+    tip.hidden = true;
+    tip.setAttribute("aria-hidden", "true");
+    tip.textContent = "";
+  };
+
+  const scheduleHide = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      hideTimer = null;
+      hideNow();
+    }, 80);
+  };
+
+  const getItemLabel = (el) => {
+    const span = el.querySelector(":scope > span");
+    const t = span?.textContent?.trim();
+    if (t) return t;
+    return String(el.getAttribute("aria-label") || "").trim();
+  };
+
+  const showForEl = (el) => {
+    if (!isCollapsed()) return;
+    const label = getItemLabel(el);
+    if (!label) return;
+    tip.textContent = label;
+    tip.hidden = false;
+    tip.setAttribute("aria-hidden", "false");
+    tip.style.visibility = "hidden";
+    tip.classList.remove("campatrack-sidebar-tooltip--visible");
+    const rect = el.getBoundingClientRect();
+    const gap = 10;
+    const edge = 8;
+    tip.style.left = "0px";
+    tip.style.top = "0px";
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    let left = rect.right + gap;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (left + tw > vw - edge) left = Math.max(edge, vw - tw - edge);
+    if (left < edge) left = edge;
+    let top = rect.top + (rect.height - th) / 2;
+    if (top < edge) top = edge;
+    if (top + th > vh - edge) top = Math.max(edge, vh - th - edge);
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+    tip.style.visibility = "visible";
+    requestAnimationFrame(() => {
+      if (!isCollapsed() || tip.textContent !== label) return;
+      tip.classList.add("campatrack-sidebar-tooltip--visible");
+    });
+  };
+
+  sidebar.addEventListener(
+    "mouseover",
+    (e) => {
+      const el = e.target.closest(".campatrack-side-nav-item, .campatrack-side-tool-btn");
+      if (!el || !sidebar.contains(el)) return;
+      if (el.classList.contains("hidden")) return;
+      if (!isCollapsed()) return;
+
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      if (showTimer) clearTimeout(showTimer);
+      pendingEl = el;
+      showTimer = setTimeout(() => {
+        showTimer = null;
+        if (!isCollapsed() || pendingEl !== el) return;
+        showForEl(el);
+      }, 160);
+    },
+    true
+  );
+
+  sidebar.addEventListener(
+    "mouseout",
+    (e) => {
+      const rel = e.relatedTarget;
+      if (rel instanceof Node && sidebar.contains(rel)) return;
+      pendingEl = null;
+      if (showTimer) {
+        clearTimeout(showTimer);
+        showTimer = null;
+      }
+      scheduleHide();
+    },
+    true
+  );
+
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (tip.classList.contains("campatrack-sidebar-tooltip--visible")) hideNow();
+    },
+    true
+  );
+  window.addEventListener("resize", hideNow);
+
+  try {
+    const mo = new MutationObserver(() => {
+      if (!isCollapsed()) hideNow();
+    });
+    mo.observe(shell, { attributes: true, attributeFilter: ["class"] });
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 bootstrapCampatrackAuthShell();
 hydratarDesdeLocalStorage();
 initTabs();
 initCampatrackAppHeader();
 initAppThemeToggle();
 initCampatrackSidebarToggle();
+initCampatrackSidebarCollapsedTooltips();
 initCampatrackLogin();
 initBitacoraModule();
 initExportImportDatos();

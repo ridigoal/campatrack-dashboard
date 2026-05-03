@@ -107,52 +107,129 @@
   </header>
   <input id="importDataFileInput" class="hidden" type="file" accept="application/json,.json" aria-hidden="true" />
 
-  <section id="costCenterModule" class="cc-module" aria-label="Centro de costos">
-    <header class="cc-header">
-      <h1>Centro de costos</h1>
-      <p class="cc-subtitle">Presupuestos (bolsas) y consumo vinculado al Planning.</p>
-    </header>
-    <div class="cc-sections-stack">
-      <div class="cc-panel cc-panel-main table-card cc-panel-main-full cc-card-main">
-        <div class="cc-toolbar">
-          <button id="ccAddRowBtn" type="button" class="btn-toolbar btn-primary btn-small">Agregar fila</button>
-          <button id="ccDeleteRowBtn" type="button" class="btn-toolbar btn-danger btn-small" disabled>Eliminar fila seleccionada</button>
+  <section id="costCenterModule" class="cc-module cc-module-saas" aria-label="Centro de costos">
+    <div class="cc-saas-inner">
+      <div class="cc-module-actions-bar" role="toolbar" aria-label="Acciones de centro de costos">
+        <div class="cc-page-actions-saas">
+          <button id="ccAddRowBtn" type="button" class="cc-btn cc-btn-primary">
+            <i class="fa-solid fa-plus" aria-hidden="true"></i> Agregar centro de costo
+          </button>
+          <button id="ccEditRowBtn" type="button" class="cc-btn cc-btn-outline">
+            <i class="fa-solid fa-pen" aria-hidden="true"></i> Editar
+          </button>
+          <button id="ccExportBtn" type="button" class="cc-btn cc-btn-outline">
+            <i class="fa-solid fa-download" aria-hidden="true"></i> Exportar
+          </button>
+          <div class="cc-dropdown cc-header-more-dd">
+            <button type="button" class="cc-btn cc-btn-icon cc-more-actions-btn" id="ccMoreActionsBtn" aria-haspopup="true" aria-expanded="false" aria-label="Más acciones" title="Más acciones">
+              <i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
+            </button>
+            <div class="cc-dropdown-panel" id="ccMoreActionsPanel" role="menu" hidden>
+              <button type="button" class="cc-dropdown-item cc-dropdown-item--danger" id="ccMoreDeleteBtn" role="menuitem" disabled>Eliminar centro seleccionado</button>
+            </div>
+          </div>
         </div>
-        <div class="cc-table-scroll">
-          <table class="cc-table" id="ccMainTable">
+      </div>
+
+      <div class="cc-kpi-grid" role="region" aria-label="Indicadores de centro de costos">
+        <article class="cc-kpi-card cc-kpi-card--primary">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-wallet"></i></span>
+          <span class="cc-kpi-label">Presupuesto total</span>
+          <span class="cc-kpi-value" id="ccKpiPresupuestoTotal">$0</span>
+          <span class="cc-kpi-sub" id="ccKpiPresupuestoSub">100% del presupuesto planificado</span>
+          <div class="cc-kpi-progress cc-kpi-progress--blue" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarPresupuesto" style="width:100%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-dollar-sign"></i></span>
+          <span class="cc-kpi-label">Inversión usada</span>
+          <span class="cc-kpi-value" id="ccKpiInversionUsada">$0</span>
+          <span class="cc-kpi-sub" id="ccKpiInversionUsadaSub">0% del presupuesto</span>
+          <div class="cc-kpi-progress cc-kpi-progress--green" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarUsada" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-piggy-bank"></i></span>
+          <span class="cc-kpi-label">Saldo disponible</span>
+          <span class="cc-kpi-value" id="ccKpiSaldo">$0</span>
+          <span class="cc-kpi-sub" id="ccKpiSaldoSub">0% disponible</span>
+          <div class="cc-kpi-progress cc-kpi-progress--orange" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarSaldo" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></span>
+          <span class="cc-kpi-label">% Ejecución</span>
+          <span class="cc-kpi-value" id="ccKpiEjecucionPct">0%</span>
+          <span class="cc-kpi-sub">vs presupuesto total</span>
+          <div class="cc-kpi-progress cc-kpi-progress--purple" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarEjecucion" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card cc-kpi-card--risk">
+          <span class="cc-kpi-icon cc-kpi-icon--risk" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+          <span class="cc-kpi-label">Centros en riesgo</span>
+          <span class="cc-kpi-value" id="ccKpiCentrosRiesgo">0</span>
+          <span class="cc-kpi-sub cc-kpi-sub--risk">Más del 90% consumido</span>
+        </article>
+      </div>
+
+      <article class="cc-card-table table-card">
+        <div class="cc-table-scroll cc-table-scroll--saas">
+          <table class="cc-table cc-table--saas" id="ccMainTable">
             <thead>
               <tr>
                 <th>Agrupador</th>
-                <th>Nombre del proyecto</th>
-                <th>Nombre de la cuenta</th>
                 <th>Descripción del servicio / item</th>
                 <th>Inversión total</th>
                 <th>Inversión usada</th>
                 <th>Saldo</th>
+                <th>% usado</th>
+                <th>Estado</th>
+                <th class="cc-th-actions">Acciones</th>
               </tr>
             </thead>
             <tbody id="ccMainBody"></tbody>
           </table>
         </div>
-      </div>
-      <div class="cc-planning-summaries" aria-label="Resúmenes de inversión desde Planning">
-        <div class="cc-planning-summary-card table-card cc-ps-theme-tipo">
-          <div class="cc-planning-summary-scroll">
-            <table class="cc-planning-summary" id="ccResumenTipo" aria-label="Inversión mensual por tipo"></table>
+      </article>
+
+      <div class="cc-analytics-stack" id="ccAnalysisSection" aria-label="Inversión mensual desde Planning">
+        <article class="cc-analytic-card cc-ps-theme-tipo" id="cc-analysis-tipo" aria-labelledby="ccAnalyticTipoHeading">
+          <header class="cc-analytic-card-head">
+            <h2 id="ccAnalyticTipoHeading" class="cc-analytic-card-title">
+              <i class="fa-solid fa-table" aria-hidden="true"></i> Por tipo – inversión mensual
+            </h2>
+          </header>
+          <div class="cc-analytic-table-scroll">
+            <table class="cc-planning-summary" id="ccResumenTipo" aria-label="Inversión mensual por tipo de campaña"></table>
           </div>
-        </div>
-        <div class="cc-planning-summary-card table-card cc-ps-theme-plataforma">
-          <div class="cc-planning-summary-scroll">
+        </article>
+
+        <article class="cc-analytic-card cc-ps-theme-plataforma" id="cc-analysis-plat" aria-labelledby="ccAnalyticPlatHeading">
+          <header class="cc-analytic-card-head">
+            <h2 id="ccAnalyticPlatHeading" class="cc-analytic-card-title">
+              <i class="fa-solid fa-table" aria-hidden="true"></i> Por plataforma – inversión mensual
+            </h2>
+          </header>
+          <div class="cc-analytic-table-scroll">
             <table class="cc-planning-summary" id="ccResumenPlataforma" aria-label="Inversión mensual por plataforma"></table>
           </div>
-        </div>
-        <div class="cc-planning-summary-card table-card cc-ps-theme-intake">
-          <div class="cc-planning-summary-scroll">
+        </article>
+
+        <article class="cc-analytic-card cc-ps-theme-intake" id="cc-analysis-intake" aria-labelledby="ccAnalyticIntakeHeading">
+          <header class="cc-analytic-card-head">
+            <h2 id="ccAnalyticIntakeHeading" class="cc-analytic-card-title">
+              <i class="fa-solid fa-table" aria-hidden="true"></i> Por intake – inversión mensual
+            </h2>
+          </header>
+          <div class="cc-analytic-table-scroll">
             <table class="cc-planning-summary" id="ccResumenIntake" aria-label="Inversión mensual por intake"></table>
           </div>
-        </div>
+        </article>
       </div>
+
+      <footer class="cc-module-foot">
+        <p class="cc-module-foot-note">Los datos mostrados provienen del Planning y se actualizan automáticamente al registrar nuevas campañas o modificar inversiones.</p>
+        <span class="cc-module-foot-time" id="ccModuleUpdatedAt"></span>
+      </footer>
     </div>
+
+    <button type="button" id="ccDeleteRowBtn" class="hidden" disabled aria-hidden="true" tabindex="-1">Eliminar fila seleccionada</button>
   </section>
 
   <section id="planningModule" class="hidden plan-module-saas">

@@ -4298,6 +4298,7 @@ textarea.bitacora-editor {
 /* ——— Centro de costos ——— */
 .cc-module {
   --cc-offset-top: 76px;
+  width: 100%;
   padding: 8px;
   box-sizing: border-box;
   max-width: 100%;
@@ -4616,6 +4617,591 @@ textarea.bitacora-editor {
 
 .cc-panel-main-full .cc-table-scroll {
   overflow-x: auto;
+}
+
+/* ——— Centro de costos (vista SaaS / dashboard) ——— */
+#costCenterModule.cc-module-saas {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 8px clamp(16px, 2.2vw, 24px) 16px;
+}
+
+#costCenterModule .cc-saas-inner {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#costCenterModule .cc-module-actions-bar {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 0 6px;
+  margin: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+#costCenterModule .cc-page-actions-saas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+#costCenterModule .cc-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+#costCenterModule .cc-btn-primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+#costCenterModule .cc-btn-primary:hover {
+  background: #1d4ed8;
+}
+
+#costCenterModule .cc-btn-outline {
+  background: #fff;
+  color: #0f172a;
+  border-color: #e5e7eb;
+}
+
+#costCenterModule .cc-btn-outline:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+#costCenterModule .cc-btn-icon {
+  padding: 9px 12px;
+  min-width: 42px;
+  justify-content: center;
+}
+
+#costCenterModule .cc-dropdown {
+  position: relative;
+}
+
+#costCenterModule .cc-dropdown-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+  z-index: 40;
+}
+
+#costCenterModule .cc-dropdown-panel[hidden] {
+  display: none !important;
+}
+
+#costCenterModule .cc-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #0f172a;
+}
+
+#costCenterModule .cc-dropdown-item:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+#costCenterModule .cc-dropdown-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#costCenterModule .cc-dropdown-item--danger {
+  color: #b91c1c;
+}
+
+#costCenterModule .cc-kpi-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1400px) {
+  #costCenterModule .cc-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  #costCenterModule .cc-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  #costCenterModule .cc-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#costCenterModule .cc-kpi-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 16px 18px;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+#costCenterModule .cc-kpi-card--primary {
+  background: linear-gradient(135deg, #eff6ff 0%, #fff 55%);
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+#costCenterModule .cc-kpi-card--risk {
+  border-color: rgba(239, 68, 68, 0.25);
+  background: linear-gradient(135deg, #fef2f2 0%, #fff 60%);
+}
+
+#costCenterModule .cc-kpi-icon {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 1.05rem;
+}
+
+#costCenterModule .cc-kpi-card--primary .cc-kpi-icon {
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+
+#costCenterModule .cc-kpi-icon--risk {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+#costCenterModule .cc-kpi-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+#costCenterModule .cc-kpi-value {
+  font-size: 1.22rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+#costCenterModule .cc-kpi-card--risk .cc-kpi-value {
+  color: #b91c1c;
+}
+
+#costCenterModule .cc-kpi-sub {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-weight: 600;
+  line-height: 1.35;
+  max-width: 18rem;
+}
+
+#costCenterModule .cc-kpi-sub--risk {
+  color: #dc2626;
+}
+
+#costCenterModule .cc-kpi-progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+#costCenterModule .cc-kpi-progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+#costCenterModule .cc-kpi-progress--blue .cc-kpi-progress-bar {
+  background: #2563eb;
+}
+
+#costCenterModule .cc-kpi-progress--green .cc-kpi-progress-bar {
+  background: #16a34a;
+}
+
+#costCenterModule .cc-kpi-progress--orange .cc-kpi-progress-bar {
+  background: #ea580c;
+}
+
+#costCenterModule .cc-kpi-progress--purple .cc-kpi-progress-bar {
+  background: #7c3aed;
+}
+
+#costCenterModule .cc-card-table {
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  overflow: hidden;
+}
+
+#costCenterModule .cc-table-scroll--saas {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  max-height: min(52vh, 520px);
+}
+
+#costCenterModule .cc-table--saas {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.88rem;
+}
+
+#costCenterModule .cc-table--saas thead th {
+  background: #1e3a8a;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+#costCenterModule .cc-table--saas th.cc-th-actions,
+#costCenterModule .cc-table--saas td.cc-td-actions {
+  width: 56px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#costCenterModule .cc-table--saas tbody td {
+  padding: 8px 10px;
+  border-color: #e2e8f0;
+}
+
+#costCenterModule .cc-pct-cell {
+  min-width: 120px;
+}
+
+#costCenterModule .cc-pct-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+#costCenterModule .cc-pct-bar-track {
+  flex: 1;
+  max-width: 72px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+#costCenterModule .cc-pct-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #16a34a;
+}
+
+#costCenterModule .cc-pct-bar-fill--warn {
+  background: #ea580c;
+}
+
+#costCenterModule .cc-pct-bar-fill--risk {
+  background: #dc2626;
+}
+
+#costCenterModule .cc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+#costCenterModule .cc-badge--ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+#costCenterModule .cc-badge--riesgo {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+#costCenterModule .cc-row-menu-btn {
+  border: none;
+  background: #f1f5f9;
+  color: #475569;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#costCenterModule .cc-row-menu-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+#costCenterModule .cc-row-dd-panel {
+  right: auto;
+  left: 0;
+  top: calc(100% + 4px);
+}
+
+/* Tablas analíticas mensuales (Centro de costos) */
+#costCenterModule .cc-analytics-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+#costCenterModule .cc-analytic-card {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  padding: 0;
+  overflow: hidden;
+}
+
+#costCenterModule .cc-analytic-card-head {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: #fafafa;
+}
+
+#costCenterModule .cc-analytic-card-title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#costCenterModule .cc-analytic-card-title .fa-table {
+  color: #64748b;
+  font-size: 0.95rem;
+}
+
+#costCenterModule .cc-ps-theme-tipo .cc-analytic-card-title {
+  color: #14532d;
+}
+
+#costCenterModule .cc-ps-theme-plataforma .cc-analytic-card-title {
+  color: #5b21b6;
+}
+
+#costCenterModule .cc-ps-theme-intake .cc-analytic-card-title {
+  color: #9a3412;
+}
+
+#costCenterModule .cc-analytic-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary {
+  font-size: 0.9rem;
+}
+
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary.cc-analytic-monthly-table .cc-ps-th:not(.cc-ps-th-dim),
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary.cc-analytic-monthly-table .cc-ps-td-num {
+  min-width: 5.75rem;
+  font-size: 0.92rem;
+  font-weight: 650;
+  padding: 8px 10px;
+}
+
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary.cc-analytic-monthly-table .cc-ps-th-total,
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary.cc-analytic-monthly-table .cc-ps-td-rowtotal {
+  min-width: 7rem;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+#costCenterModule .cc-analytic-table-scroll .cc-planning-summary.cc-analytic-monthly-table tbody th.cc-ps-td-dim {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+#costCenterModule .cc-ps-theme-tipo .cc-planning-summary.cc-analytic-monthly-table .cc-ps-th {
+  background: #15803d;
+}
+
+#costCenterModule .cc-ps-theme-plataforma .cc-planning-summary.cc-analytic-monthly-table .cc-ps-th {
+  background: #6d28d9;
+}
+
+#costCenterModule .cc-ps-theme-intake .cc-planning-summary.cc-analytic-monthly-table .cc-ps-th {
+  background: #ea580c;
+}
+
+#costCenterModule .cc-module-foot {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+#costCenterModule .cc-module-foot-note {
+  margin: 0;
+  max-width: 52rem;
+  line-height: 1.4;
+}
+
+#costCenterModule .cc-module-foot-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+body.dark-mode #costCenterModule.cc-module-saas {
+  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+}
+
+body.dark-mode #costCenterModule .cc-analytic-card-title,
+body.dark-mode #costCenterModule .cc-kpi-value {
+  color: #f1f5f9;
+}
+
+body.dark-mode #costCenterModule .cc-kpi-card,
+body.dark-mode #costCenterModule .cc-card-table,
+body.dark-mode #costCenterModule .cc-analytic-card {
+  background: #1e293b;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+body.dark-mode #costCenterModule .cc-module-actions-bar {
+  border-bottom-color: #334155;
+}
+
+body.dark-mode #costCenterModule .cc-analytic-card-head {
+  background: #0f172a;
+  border-bottom-color: #334155;
+}
+
+body.dark-mode #costCenterModule .cc-ps-theme-tipo .cc-analytic-card-title {
+  color: #86efac;
+}
+
+body.dark-mode #costCenterModule .cc-ps-theme-plataforma .cc-analytic-card-title {
+  color: #c4b5fd;
+}
+
+body.dark-mode #costCenterModule .cc-ps-theme-intake .cc-analytic-card-title {
+  color: #fdba74;
+}
+
+body.dark-mode #costCenterModule .cc-kpi-card--primary {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, #1e293b 55%);
+}
+
+body.dark-mode #costCenterModule .cc-kpi-card--risk {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, #1e293b 60%);
+}
+
+body.dark-mode #costCenterModule .cc-btn-outline {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
+body.dark-mode #costCenterModule .cc-table--saas tbody td {
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark-mode #costCenterModule .cc-dropdown-panel {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+body.dark-mode #costCenterModule .cc-dropdown-item {
+  color: #e2e8f0;
+}
+
+body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary td,
+body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary tbody th {
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary .cc-ps-td-rowtotal {
+  background: #334155;
+  color: #f8fafc;
 }
 
 .cc-panel-side-stacked {
@@ -11267,6 +11853,50 @@ body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-toolbar-act
   justify-content: center !important;
   padding: 8px 6px !important;
   gap: 0 !important;
+}
+
+/* Tooltip al hover con sidebar colapsado (#campatrackSidebarTooltip creado por JS) */
+#campatrackSidebarTooltip.campatrack-sidebar-tooltip {
+  position: fixed;
+  z-index: 100060;
+  max-width: min(300px, calc(100vw - 20px));
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #111827;
+  color: #f8fafc;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+  white-space: nowrap;
+}
+
+#campatrackSidebarTooltip.campatrack-sidebar-tooltip--visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
+  background: #020617;
+  color: #f1f5f9;
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(148, 163, 184, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
+    transition: none;
+  }
 }
 
 .campatrack-side-nav-item:hover {
