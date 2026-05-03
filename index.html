@@ -155,17 +155,66 @@
     </div>
   </section>
 
-  <section id="planningModule" class="hidden">
-    <div class="dashboard">
-    <div class="toolbar-row" aria-label="Resumen, filtros y acciones">
-      <div class="total-inversion-card" id="totalInversionCard">
-        <span class="total-inversion-label">Total Inversión:</span>
-        <span class="total-inversion-value" id="totalInversionValue">$0</span>
+  <section id="planningModule" class="hidden plan-module-saas">
+    <div class="dashboard dashboard-saas">
+    <header class="planning-page-head-saas">
+      <div>
+        <h1 class="planning-page-title-main">Planificación de Campañas</h1>
+        <p class="planning-page-lead">Planifica, organiza y visualiza tus campañas de marketing en todos los canales.</p>
       </div>
-      <div class="filters-bar">
-        <label class="filter-field">
-          Tipo
-          <select id="filterTipo" aria-label="Filtrar por tipo">
+    </header>
+
+    <div class="planning-kpi-grid" role="region" aria-label="Indicadores del planning">
+      <article class="planning-kpi-card planning-kpi-card--primary">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-sack-dollar"></i></span>
+        <span class="planning-kpi-label">Inversión total</span>
+        <span class="planning-kpi-value" id="planningKpiInversion">$0</span>
+        <span class="planning-kpi-sub">Presupuesto filtrado</span>
+        <span id="totalInversionValue" class="hidden" aria-hidden="true">$0</span>
+      </article>
+      <article class="planning-kpi-card">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-bolt"></i></span>
+        <span class="planning-kpi-label">Campañas activas</span>
+        <span class="planning-kpi-value" id="planningKpiActivas">0</span>
+        <span class="planning-kpi-sub">En ejecución</span>
+      </article>
+      <article class="planning-kpi-card">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-eye"></i></span>
+        <span class="planning-kpi-label">Impresiones estimadas</span>
+        <span class="planning-kpi-value" id="planningKpiImpresiones">0</span>
+        <span class="planning-kpi-sub">Modelo aproximado</span>
+      </article>
+      <article class="planning-kpi-card">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-computer-mouse"></i></span>
+        <span class="planning-kpi-label">Clics estimados</span>
+        <span class="planning-kpi-value" id="planningKpiClics">0</span>
+        <span class="planning-kpi-sub">Basado en metas filtradas</span>
+      </article>
+      <article class="planning-kpi-card">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-user-plus"></i></span>
+        <span class="planning-kpi-label">Leads estimados</span>
+        <span class="planning-kpi-value" id="planningKpiLeadsTotal">0</span>
+        <span class="planning-kpi-sub">Total filas visibles</span>
+      </article>
+      <article class="planning-kpi-card">
+        <span class="planning-kpi-icon" aria-hidden="true"><i class="fa-solid fa-chart-line"></i></span>
+        <span class="planning-kpi-label">ROAS proyectado</span>
+        <span class="planning-kpi-value" id="planningKpiRoas">0×</span>
+        <span class="planning-kpi-sub">Valor lead referencia</span>
+      </article>
+    </div>
+
+    <div class="toolbar-row toolbar-row-saas planning-toolbar-saas" aria-label="Resumen, filtros y acciones">
+      <div class="planning-filters-saas">
+        <label class="planning-filter-field">
+          <span class="planning-filter-label">Plataforma</span>
+          <select id="filterPlataformaPlanning" class="planning-filter-control" aria-label="Filtrar por plataforma">
+            <option value="">Todos</option>
+          </select>
+        </label>
+        <label class="planning-filter-field">
+          <span class="planning-filter-label">Tipo campaña</span>
+          <select id="filterTipo" class="planning-filter-control" aria-label="Filtrar por tipo">
             <option value="">Todos</option>
             <option value="MBA">MBA</option>
             <option value="MA">MA</option>
@@ -178,14 +227,48 @@
             <option value="Alcance">Alcance</option>
           </select>
         </label>
-        <label class="filter-field filter-programa">
-          Programa
-          <input id="filterPrograma" type="text" list="filterProgramaList" placeholder="Buscar o seleccionar" autocomplete="off" aria-label="Filtrar por programa" disabled>
+        <label class="planning-filter-field">
+          <span class="planning-filter-label">Estado</span>
+          <select id="filterEstadoPlanning" class="planning-filter-control" aria-label="Filtrar por estado de campaña">
+            <option value="">Todos</option>
+            <option value="Activa">Activa</option>
+            <option value="Programada">Programada</option>
+            <option value="Pausada">Pausada</option>
+            <option value="Borrador">Borrador</option>
+          </select>
+        </label>
+        <label class="planning-filter-field planning-filter-field--search">
+          <span class="planning-filter-label">Buscar</span>
+          <input id="planningToolbarSearch" type="search" class="planning-filter-control planning-search-input" placeholder="Buscar campañas..." autocomplete="off" aria-label="Buscar en planning" />
+        </label>
+        <label class="planning-filter-field planning-filter-field--range">
+          <span class="planning-filter-label">Rango de fechas</span>
+          <input id="planningFechaRango" type="text" readonly class="planning-filter-control planning-range-input" placeholder="Todas las fechas" aria-label="Rango de fechas de campaña" />
+        </label>
+        <button type="button" id="planningFiltrosAvanzadosBtn" class="btn-toolbar planning-adv-trigger" aria-expanded="false" aria-controls="planningAdvFiltersPanel">
+          <i class="fa-solid fa-sliders" aria-hidden="true"></i> Filtros avanzados
+        </button>
+      </div>
+      <div class="toolbar-actions planning-toolbar-actions-saas">
+        <button id="newCampaignBtn" type="button" class="btn-toolbar btn-primary btn-saas-primary"><i class="fa-solid fa-plus" aria-hidden="true"></i> Nueva campaña</button>
+        <button id="planningImportTableBtn" type="button" class="btn-toolbar btn-saas-outline"><i class="fa-solid fa-file-import" aria-hidden="true"></i> Importar</button>
+        <button id="planningExportTableBtn" type="button" class="btn-toolbar btn-saas-outline"><i class="fa-solid fa-file-export" aria-hidden="true"></i> Exportar</button>
+        <button id="editRecordBtn" type="button" class="btn-toolbar btn-saas-outline" disabled>Editar</button>
+        <button id="deleteRecordBtn" type="button" class="btn-toolbar btn-danger btn-saas-outline-danger" disabled>Eliminar</button>
+      </div>
+    </div>
+
+    <div id="planningAdvFiltersPanel" class="planning-adv-filters-panel hidden" role="region" aria-hidden="true" aria-labelledby="planningAdvFiltersHeading">
+      <p id="planningAdvFiltersHeading" class="planning-adv-filters-heading">Filtros avanzados</p>
+      <div class="planning-adv-filters-inner">
+        <label class="planning-filter-field planning-filter-field--grow">
+          <span class="planning-filter-label">Programa</span>
+          <input id="filterPrograma" type="text" list="filterProgramaList" placeholder="Buscar o seleccionar" autocomplete="off" aria-label="Filtrar por programa" disabled class="planning-filter-control">
           <datalist id="filterProgramaList"></datalist>
         </label>
-        <label class="filter-field">
-          Intake
-          <select id="filterIntake" aria-label="Filtrar por intake">
+        <label class="planning-filter-field">
+          <span class="planning-filter-label">Intake</span>
+          <select id="filterIntake" class="planning-filter-control" aria-label="Filtrar por intake">
             <option value="">Todos</option>
             <option value="Intake 1">Intake 1</option>
             <option value="Intake 2">Intake 2</option>
@@ -194,21 +277,11 @@
           </select>
         </label>
       </div>
-      <div class="toolbar-actions-spacer"></div>
-      <div class="toolbar-actions">
-        <button id="editRecordBtn" type="button" class="btn-toolbar" disabled>Editar</button>
-        <button id="deleteRecordBtn" type="button" class="btn-toolbar btn-danger" disabled>Eliminar</button>
-        <button id="newCampaignBtn" type="button" class="btn-toolbar btn-primary">Nueva campaña</button>
-      </div>
     </div>
 
-    <header class="dashboard-header">
-      <h1>Planning de Marketing</h1>
-    </header>
-
-    <section class="table-card" aria-label="Planificador de marketing">
+    <section class="table-card table-card-planning-saas" aria-label="Planificador de marketing">
       <div class="table-scroll">
-        <table class="planning-table">
+        <table class="planning-table planning-table-saas">
           <thead>
             <tr>
               <th class="sticky-col-tipo group-header" rowspan="2">Tipo</th>
@@ -291,59 +364,119 @@
     </div>
   </section>
 
-  <section id="dataModule" class="hidden" aria-label="Módulo DATA">
-    <div class="data-wrap">
-      <h2 class="data-title">DATA</h2>
-      <p class="data-subtitle">Carga, visualización y preparación de data real (sin cálculos aún).</p>
+  <section id="dataModule" class="hidden data-module-saas" aria-label="Módulo DATA">
+    <div class="data-wrap data-wrap-saas">
+      <div class="data-saas-toolbar" role="toolbar" aria-label="Acciones rápidas Data">
+        <div class="data-saas-hero-actions">
+          <button id="openDataLoadBtnHero" type="button" class="btn-toolbar btn-primary data-saas-btn-primary"><i class="fa-solid fa-plus" aria-hidden="true"></i> Cargar Data General</button>
+          <button id="dataModuleImportBtn" type="button" class="btn-toolbar data-saas-btn-secondary"><i class="fa-solid fa-file-import" aria-hidden="true"></i> Importar</button>
+        </div>
+      </div>
 
-      <div class="data-subtabs" role="tablist" aria-label="Subpestañas DATA">
+      <div class="data-saas-kpi-grid data-kpi-from-general" role="region" aria-label="Resumen de data general">
+        <article class="data-kpi-card data-kpi-card--indigo">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-folder-open"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Registros cargados</span>
+            <span class="data-kpi-num" id="dataKpiRegistros">0</span>
+            <span class="data-kpi-hint">Total procesados</span>
+          </div>
+        </article>
+        <article class="data-kpi-card data-kpi-card--emerald">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-bullseye"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Campañas únicas</span>
+            <span class="data-kpi-num" id="dataKpiCampanas">0</span>
+            <span class="data-kpi-hint">Desde data general</span>
+          </div>
+        </article>
+        <article class="data-kpi-card data-kpi-card--violet">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-wallet"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Gasto total</span>
+            <span class="data-kpi-num" id="dataKpiGasto">$0</span>
+            <span class="data-kpi-hint">Inversión acumulada</span>
+          </div>
+        </article>
+        <article class="data-kpi-card data-kpi-card--amber">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-user-group"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Leads generados</span>
+            <span class="data-kpi-num" id="dataKpiLeads">0</span>
+            <span class="data-kpi-hint">Suma en data general</span>
+          </div>
+        </article>
+        <article class="data-kpi-card data-kpi-card--sky">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-eye"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Impresiones</span>
+            <span class="data-kpi-num" id="dataKpiImpresiones">0</span>
+            <span class="data-kpi-hint">Total impresiones</span>
+          </div>
+        </article>
+        <article class="data-kpi-card data-kpi-card--mint">
+          <div class="data-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-computer-mouse"></i></div>
+          <div class="data-kpi-copy">
+            <span class="data-kpi-label">Clics</span>
+            <span class="data-kpi-num" id="dataKpiClics">0</span>
+            <span class="data-kpi-hint">Total clics</span>
+          </div>
+        </article>
+      </div>
+
+      <div class="data-subtabs data-subtabs-saas" role="tablist" aria-label="Subpestañas DATA">
         <button id="dataTabGeneral" class="data-subtab data-subtab-active" type="button" role="tab" aria-selected="true">General</button>
-        <button id="dataTabDemographic" class="data-subtab" type="button" role="tab" aria-selected="false">Demográficos</button>
-        <button id="dataTabGeographic" class="data-subtab" type="button" role="tab" aria-selected="false">Geográficos</button>
         <button id="dataTabAnuncios" class="data-subtab" type="button" role="tab" aria-selected="false">Anuncios</button>
         <button id="dataTabUnique" class="data-subtab" type="button" role="tab" aria-selected="false">Campañas Únicas</button>
       </div>
 
-      <section id="dataPanelGeneral" class="data-panel" role="tabpanel">
-        <div class="data-actions">
-          <button id="openDataLoadBtn" type="button" class="btn-toolbar btn-primary">Cargar Data General</button>
-          <button id="undoLastLoadBtn" type="button" class="btn-toolbar">Deshacer última carga</button>
-          <button id="deleteSelectedDataBtn" type="button" class="btn-toolbar btn-danger">Eliminar seleccionados</button>
-          <button id="clearStorageBtn" type="button" class="btn-toolbar">Limpiar datos</button>
-          <span id="dataStatus" class="data-status">0 filas procesadas | Total acumulado: 0</span>
-          <button id="openDataErrorDetailGeneralBtn" type="button" class="btn-toolbar hidden">Ver detalle de carga</button>
+      <section id="dataPanelGeneral" class="data-panel data-panel-saas-general" role="tabpanel">
+        <div class="data-actions data-actions-saas">
+          <button id="openDataLoadBtn" type="button" class="btn-toolbar btn-primary data-saas-btn-primary"><i class="fa-solid fa-plus" aria-hidden="true"></i> Cargar Data General</button>
+          <button id="undoLastLoadBtn" type="button" class="btn-toolbar data-saas-btn-secondary">Deshacer última carga</button>
+          <button id="deleteSelectedDataBtn" type="button" class="btn-toolbar btn-danger data-saas-btn-danger-outline">Eliminar seleccionados</button>
+          <button id="clearStorageBtn" type="button" class="btn-toolbar data-saas-btn-muted">Limpiar datos</button>
+          <button id="openDataErrorDetailGeneralBtn" type="button" class="btn-toolbar hidden data-saas-btn-secondary">Ver detalle de carga</button>
+          <span id="dataStatus" class="data-status data-status-saas"></span>
         </div>
+        <p id="dataGeneralLoadNotice" class="data-load-notice hidden" role="status" aria-live="polite"></p>
 
-        <div class="data-filters-panel">
-          <label class="data-filter-field">
-            Fecha (mes)
-            <select id="dataFilterFechaMes">
+        <div class="data-filters-panel data-filters-saas">
+          <label class="data-filter-field data-filter-saas-field">
+            <span class="planning-filter-label">Fecha (mes)</span>
+            <select id="dataFilterFechaMes" class="planning-filter-control" aria-label="Filtrar por mes">
               <option value="">Todos</option>
             </select>
           </label>
-          <label class="data-filter-field">
-            Día
-            <select id="dataFilterFechaDia">
+          <label class="data-filter-field data-filter-saas-field">
+            <span class="planning-filter-label">Día</span>
+            <select id="dataFilterFechaDia" class="planning-filter-control" aria-label="Filtrar por día">
               <option value="">Todos</option>
             </select>
           </label>
-          <label class="data-filter-field">
-            ID Campaña
-            <input id="dataFilterIdInput" type="text" placeholder="Buscar por ID..." />
+          <label class="data-filter-field data-filter-saas-field data-filter-saas-search">
+            <span class="planning-filter-label">ID campaña</span>
+            <input id="dataFilterIdInput" class="planning-filter-control planning-search-input" type="search" placeholder="Buscar ID..." autocomplete="off" aria-label="Buscar por ID de campaña" />
           </label>
-          <label class="data-filter-field">
-            Nombre
-            <input id="dataFilterNombreInput" type="text" placeholder="Buscar por nombre..." />
+          <label class="data-filter-field data-filter-saas-field data-filter-saas-search">
+            <span class="planning-filter-label">Nombre</span>
+            <input id="dataFilterNombreInput" class="planning-filter-control planning-search-input" type="search" placeholder="Buscar nombre..." autocomplete="off" aria-label="Buscar por nombre" />
           </label>
+          <button type="button" id="dataFiltersAdvancedBtn" class="btn-toolbar data-adv-filters-btn" aria-expanded="false" aria-controls="dataAdvFiltersWrap">
+            <i class="fa-solid fa-sliders" aria-hidden="true"></i> Filtros avanzados
+          </button>
+        </div>
+        <div id="dataAdvFiltersWrap" class="data-adv-filters-wrap hidden" role="region" aria-hidden="true">
+          <p class="data-adv-filters-hint">Opciones adicionales de filtrado se pueden ampliar aquí sin alterar la lógica actual.</p>
         </div>
 
-        <p class="data-registros-carga" id="dataGeneralRegistrosMeta">Registros cargados: <span id="dataGeneralRegistrosCount">0</span></p>
-        <div class="table-card" aria-label="Tabla de resultados DATA">
-          <div class="data-table-wrap" role="region" aria-label="Tabla DATA con scroll">
-            <table class="data-table">
+        <p class="data-registros-carga hidden" id="dataGeneralRegistrosMeta" aria-hidden="true">Registros cargados: <span id="dataGeneralRegistrosCount">0</span></p>
+        <div class="table-card data-table-card-saas" aria-label="Tabla de resultados DATA">
+          <div class="data-table-wrap data-table-wrap-saas" role="region" aria-label="Tabla DATA con scroll">
+            <table class="data-table data-table-saas-general">
               <thead>
                 <tr>
-                  <th>Sel</th>
+                  <th class="data-th-check"></th>
                   <th>Fecha</th>
                   <th>ID Campaña</th>
                   <th>Nombre</th>
@@ -352,85 +485,51 @@
                   <th>Estado</th>
                   <th>Impresiones</th>
                   <th>Clics</th>
+                  <th class="data-th-actions"></th>
                 </tr>
               </thead>
               <tbody id="dataTbody"></tbody>
               <tfoot>
-                <tr class="data-totals-row">
-                  <td colspan="4"><strong>Totales (visible)</strong></td>
+                <tr class="data-totals-row data-totals-row-saas">
+                  <td colspan="4"><strong>Totales (visibles)</strong></td>
                   <td id="dataTotalGasto"></td>
                   <td id="dataTotalLeads"></td>
                   <td></td>
                   <td id="dataTotalImpresiones"></td>
                   <td id="dataTotalClics"></td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>
           </div>
-        </div>
-      </section>
-
-      <section id="dataPanelDemographic" class="data-panel hidden" role="tabpanel">
-        <div class="data-actions">
-          <button id="openDemographicLoadBtn" type="button" class="btn-toolbar btn-primary">Cargar Demográficos</button>
-          <button id="deleteSelectedDemographicBtn" type="button" class="btn-toolbar btn-danger">Eliminar seleccionados</button>
-          <span id="dataDemographicStatus" class="data-status">0 filas procesadas | Total acumulado: 0</span>
-          <button id="openDataErrorDetailBtn" type="button" class="btn-toolbar hidden">Ver detalle</button>
-        </div>
-        <p class="data-registros-carga" id="dataDemographicRegistrosMeta">Registros cargados: <span id="dataDemographicRegistrosCount">0</span></p>
-        <div class="table-card" aria-label="Tabla de resultados demográficos">
-          <div class="data-table-wrap" role="region" aria-label="Tabla DEMOGRÁFICOS con scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Sel</th>
-                  <th>Fecha</th>
-                  <th>ID Campaña</th>
-                  <th>Nombre Campaña</th>
-                  <th>Edad</th>
-                  <th>Sexo</th>
-                  <th>Resultados (Leads)</th>
-                </tr>
-              </thead>
-              <tbody id="dataDemographicTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section id="dataPanelGeographic" class="data-panel hidden" role="tabpanel">
-        <div class="data-actions">
-          <button id="openGeographicLoadBtn" type="button" class="btn-toolbar btn-primary">Cargar Geográficos</button>
-          <button id="deleteSelectedGeographicBtn" type="button" class="btn-toolbar btn-danger">Eliminar seleccionados</button>
-          <span id="dataGeographicStatus" class="data-status">0 filas procesadas | Total acumulado: 0</span>
-          <button id="openDataErrorDetailGeoBtn" type="button" class="btn-toolbar hidden">Ver detalle de carga</button>
-        </div>
-        <p class="data-registros-carga" id="dataGeographicRegistrosMeta">Registros cargados: <span id="dataGeographicRegistrosCount">0</span></p>
-        <div class="table-card" aria-label="Tabla de resultados geográficos">
-          <div class="data-table-wrap" role="region" aria-label="Tabla GEOGRÁFICOS con scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Sel</th>
-                  <th>Fecha</th>
-                  <th>ID Campaña</th>
-                  <th>Nombre Campaña</th>
-                  <th>Región</th>
-                  <th>Resultados (Leads)</th>
-                </tr>
-              </thead>
-              <tbody id="dataGeographicTbody"></tbody>
-            </table>
-          </div>
+          <footer class="data-pagination-bar" aria-label="Paginación data general">
+            <span id="dataPaginationInfo" class="data-pagination-info"></span>
+            <div class="data-pagination-controls">
+              <label class="data-page-size-field">
+                <span>Filas por página</span>
+                <select id="dataPageSize" aria-label="Filas por página">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                </select>
+              </label>
+              <div class="data-page-btns">
+                <button type="button" id="dataPagePrev" class="btn-toolbar data-page-nav" aria-label="Página anterior">&lsaquo;</button>
+                <span id="dataPageIndicator" class="data-page-indicator" aria-live="polite">1</span>
+                <button type="button" id="dataPageNext" class="btn-toolbar data-page-nav" aria-label="Página siguiente">&rsaquo;</button>
+              </div>
+            </div>
+          </footer>
         </div>
       </section>
 
       <section id="dataPanelAnuncios" class="data-panel hidden" role="tabpanel">
-        <div class="data-actions">
-          <button id="openAnunciosLoadBtn" type="button" class="btn-toolbar btn-primary">Cargar Data Anuncios</button>
-          <button id="deleteSelectedAnunciosBtn" type="button" class="btn-toolbar btn-danger">Eliminar seleccionados</button>
-          <span id="dataAnunciosStatus" class="data-status">0 filas procesadas | Total acumulado: 0</span>
-          <button id="openDataErrorDetailAnunciosBtn" type="button" class="btn-toolbar hidden">Ver detalle de carga</button>
+        <div class="data-actions data-actions-saas">
+          <button id="openAnunciosLoadBtn" type="button" class="btn-toolbar btn-primary data-saas-btn-primary">Cargar Data Anuncios</button>
+          <button id="deleteSelectedAnunciosBtn" type="button" class="btn-toolbar btn-danger data-saas-btn-danger-outline">Eliminar seleccionados</button>
+          <button id="openDataErrorDetailAnunciosBtn" type="button" class="btn-toolbar hidden data-saas-btn-secondary">Ver detalle de carga</button>
+          <span id="dataAnunciosStatus" class="data-status data-status-saas">0 filas procesadas | Total acumulado: 0</span>
         </div>
         <p class="data-registros-carga" id="dataAnunciosRegistrosMeta">Registros cargados: <span id="dataAnunciosRegistrosCount">0</span></p>
         <div class="table-card" aria-label="Tabla de data anuncios">
@@ -1286,14 +1385,6 @@
         <label class="app-dialog-check-option">
           <input id="dataClearGeneralChk" type="checkbox" />
           <span>General</span>
-        </label>
-        <label class="app-dialog-check-option">
-          <input id="dataClearDemographicChk" type="checkbox" />
-          <span>Demográficos</span>
-        </label>
-        <label class="app-dialog-check-option">
-          <input id="dataClearGeographicChk" type="checkbox" />
-          <span>Geográficos</span>
         </label>
         <label class="app-dialog-check-option">
           <input id="dataClearAnunciosChk" type="checkbox" />

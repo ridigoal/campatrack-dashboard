@@ -6097,9 +6097,15 @@ textarea.bitacora-editor {
 
 #planningModule .planning-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 14px;
-  margin-bottom: 4px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 1400px) {
+  #planningModule .planning-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1100px) {
@@ -6194,6 +6200,14 @@ textarea.bitacora-editor {
   color: #0f172a;
 }
 
+#planningModule .planning-kpi-sub {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-weight: 600;
+  line-height: 1.3;
+  max-width: 16rem;
+}
+
 #planningModule .planning-page-head-saas {
   display: flex;
   flex-wrap: wrap;
@@ -6226,6 +6240,122 @@ textarea.bitacora-editor {
   box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
   flex-wrap: wrap;
   gap: 10px;
+}
+
+#planningModule .planning-toolbar-saas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px 18px;
+}
+
+#planningModule .planning-filters-saas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  flex: 1 1 380px;
+}
+
+#planningModule .planning-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+#planningModule .planning-filter-field--search {
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+#planningModule .planning-filter-field--range {
+  flex: 1 1 200px;
+  min-width: 200px;
+}
+
+#planningModule .planning-filter-field--grow {
+  flex: 1 1 220px;
+}
+
+#planningModule .planning-filter-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+#planningModule .planning-filter-control {
+  font: inherit;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #0f172a;
+  min-height: 38px;
+}
+
+#planningModule .planning-search-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 10-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 101.415-1.414l-3.85-3.85a1.007 1.007 0 00-.115-.1zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 11px center;
+  padding-left: 2.35rem !important;
+}
+
+#planningModule .planning-range-input {
+  cursor: pointer;
+}
+
+#planningModule .planning-adv-trigger {
+  align-self: flex-end;
+  border-radius: 10px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#planningModule .planning-toolbar-actions-saas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+}
+
+#planningModule .planning-adv-filters-panel {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px dashed rgba(148, 163, 184, 0.55);
+  border-radius: 12px;
+}
+
+#planningModule .planning-adv-filters-heading {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #475569;
+}
+
+#planningModule .planning-adv-filters-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+}
+
+#planningModule .btn-saas-outline-danger {
+  border-color: rgba(252, 165, 165, 0.75) !important;
+  background: rgba(254, 242, 242, 0.9) !important;
+  color: #b91c1c !important;
+}
+
+#planningModule .btn-saas-outline-danger:hover:not(:disabled) {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
 }
 
 #planningModule .toolbar-row-saas .toolbar-actions {
@@ -6293,23 +6423,278 @@ textarea.bitacora-editor {
   background: #fafbff;
 }
 
-#planningModule .planning-table td.planning-cell-mes-inv:not(:empty) {
-  background: rgba(37, 99, 235, 0.08);
-  border-radius: 8px;
-  padding: 7px 8px;
+#planningModule .planning-table-saas tbody tr[data-record-id] td {
+  padding: 12px 11px;
+  vertical-align: middle;
+}
+
+#planningModule .planning-table-saas tbody tr[data-record-id] {
+  border-bottom: 8px solid transparent;
+  background-clip: padding-box;
+}
+
+#planningModule .planning-table-saas tbody tr[data-record-id] td {
+  box-shadow: inset 0 -1px 0 rgba(226, 232, 240, 0.95);
+}
+
+#planningModule .planning-mes-muted {
+  background: #fafafa !important;
+}
+
+#planningModule .planning-table-saas td.planning-cell-mes-inv,
+#planningModule .planning-table-saas td.planning-cell-mes-lead,
+#planningModule .planning-table-saas td.planning-cell-mes-cpl {
+  background: transparent !important;
+  text-align: center;
+}
+
+#planningModule .planning-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.35rem;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.15;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+}
+
+#planningModule tbody tr[data-record-id]:hover .planning-pill {
+  filter: brightness(1.03);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+#planningModule .planning-pill-inv.planning-pill-tier--hi {
+  background: linear-gradient(180deg, #bfdbfe 0%, #93c5fd 100%);
+  color: #1e3a8a;
+}
+
+#planningModule .planning-pill-inv.planning-pill-tier--md {
+  background: rgba(59, 130, 246, 0.22);
+  color: #1d4ed8;
+}
+
+#planningModule .planning-pill-inv.planning-pill-tier--lo {
+  background: rgba(219, 234, 254, 0.9);
+  color: #1e40af;
+}
+
+#planningModule .planning-pill-inv.planning-pill-tier--ghost {
+  background: rgba(241, 245, 249, 0.9);
+  color: #94a3b8;
+}
+
+#planningModule .planning-pill-lead.planning-pill-tier--hi {
+  background: linear-gradient(180deg, #bbf7d0 0%, #86efac 100%);
+  color: #14532d;
+}
+
+#planningModule .planning-pill-lead.planning-pill-tier--md {
+  background: rgba(16, 185, 129, 0.2);
+  color: #047857;
+}
+
+#planningModule .planning-pill-lead.planning-pill-tier--lo {
+  background: rgba(209, 250, 229, 0.95);
+  color: #166534;
+}
+
+#planningModule .planning-pill-lead.planning-pill-tier--ghost {
+  background: rgba(241, 245, 249, 0.95);
+  color: #94a3b8;
+}
+
+#planningModule .planning-pill-cpl.planning-pill-tier--hi {
+  background: linear-gradient(180deg, #ddd6fe 0%, #c4b5fd 100%);
+  color: #4c1d95;
+}
+
+#planningModule .planning-pill-cpl.planning-pill-tier--md {
+  background: rgba(139, 92, 246, 0.18);
+  color: #6d28d9;
+}
+
+#planningModule .planning-pill-cpl.planning-pill-tier--lo {
+  background: rgba(237, 233, 254, 0.95);
+  color: #5b21b6;
+}
+
+#planningModule .planning-pill-cpl.planning-pill-tier--ghost {
+  background: rgba(241, 245, 249, 0.95);
+  color: #cbd5e1;
+}
+
+#planningModule .planning-tipo-badge {
+  display: inline-flex;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+#planningModule .planning-tipo-badge--charla {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+}
+
+#planningModule .planning-tipo-badge--webinar {
+  background: rgba(99, 102, 241, 0.16);
+  color: #5b21b6;
+}
+
+#planningModule .planning-tipo-badge--alcance {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}
+
+#planningModule .planning-tipo-badge--di {
+  background: rgba(249, 115, 22, 0.16);
+  color: #c2410c;
+}
+
+#planningModule .planning-tipo-badge--conv {
+  background: rgba(168, 85, 247, 0.16);
+  color: #7e22ce;
+}
+
+#planningModule .planning-tipo-badge--default {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+#planningModule .planning-status-badge {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+#planningModule .planning-status-badge--activa {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+#planningModule .planning-status-badge--programada {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+}
+
+#planningModule .planning-status-badge--pausada {
+  background: rgba(251, 191, 36, 0.2);
+  color: #b45309;
+}
+
+#planningModule .planning-status-badge--borrador {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+#planningModule .planning-campaign-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+}
+
+#planningModule .planning-campaign-name {
+  font-weight: 800;
+  color: inherit;
+}
+
+#planningModule .planning-campaign-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+#planningModule .planning-campaign-sub {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+#planningModule .planning-plat-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+#planningModule .planning-plat-cell i {
+  font-size: 1.05rem;
+}
+
+#planningModule .planning-plat--meta i {
+  color: #1877f2;
+}
+
+#planningModule .planning-plat--google i {
+  color: #ea4335;
+}
+
+#planningModule .planning-plat--tiktok i {
+  color: #0f172a;
+}
+
+#planningModule .planning-plat--linkedin i {
+  color: #0a66c2;
+}
+
+#planningModule .planning-plat--default i {
+  color: #64748b;
+}
+
+#planningModule .planning-tracking-label {
   font-weight: 650;
+  color: #334155;
 }
 
-#planningModule .planning-table td.planning-cell-mes-lead:not(:empty) {
-  background: rgba(16, 185, 129, 0.09);
-  border-radius: 8px;
-  padding: 7px 8px;
+#planningModule .planning-presupuesto-val {
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
 
-#planningModule .planning-table td.planning-cell-mes-cpl:not(:empty) {
-  background: rgba(99, 102, 241, 0.1);
+#planningModule .planning-leads-total-chip {
+  display: inline-flex;
+  padding: 4px 10px;
   border-radius: 8px;
-  padding: 7px 8px;
+  background: rgba(16, 185, 129, 0.1);
+  font-weight: 800;
+}
+
+#planningModule .planning-table tr.row-selected .planning-tipo-badge,
+#planningModule .planning-table tr.row-selected .planning-status-badge,
+#planningModule .planning-table tr.row-selected .planning-leads-total-chip {
+  background: rgba(255, 255, 255, 0.22) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+#planningModule .planning-table tr.row-selected .planning-campaign-sub {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+#planningModule .planning-table tr.row-selected .planning-plat-cell i {
+  color: #fff;
+}
+
+#planningModule .planning-table tr.row-selected .planning-tracking-label {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+#planningModule .planning-table tr.row-selected .planning-presupuesto-val {
+  color: #fff;
+}
+
+#planningModule .planning-table tr.row-selected .planning-pill {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 /* ——— RELACIONES: vista SaaS ——— */
@@ -7331,9 +7716,18 @@ textarea.bitacora-editor {
 }
 
 #dataModule .data-wrap-saas {
-  padding: clamp(16px, 2vw, 28px);
-  padding-top: 8px;
+  padding: clamp(12px, 1.6vw, 22px);
+  padding-top: 4px;
   background: transparent;
+}
+
+#dataModule .data-saas-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 #dataModule .data-saas-hero {
@@ -7684,29 +8078,322 @@ textarea.bitacora-editor {
   background: rgba(109, 40, 217, 0.045);
 }
 
-/* DATA → General — columna Estado: texto plano del JS → chip único (dos tonos requerirían envolver texto o tocar plantilla).
-   DATA → Anuncios — <select>; ver reglas badge morado/verde abajo (:has opción marcada). */
-#dataPanelGeneral .data-table-saas-general tbody td:nth-child(7) {
-  text-align: center;
+#dataModule .data-table-saas-general tbody td {
   vertical-align: middle;
-  padding: 6px 10px !important;
-  font-weight: 700 !important;
-  font-size: 0.71rem !important;
-  letter-spacing: 0.02em !important;
-  text-transform: uppercase;
-  white-space: nowrap;
-  border-radius: 999px !important;
-  background: #f3f4f6;
-  border-color: transparent;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35) inset;
-  color: #4b5563;
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
 
-#dataPanelGeneral .data-table-saas-general tbody tr.data-row-selected td:nth-child(7) {
-  background: rgba(254, 252, 232, 0.22);
+#dataModule .data-load-notice {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #475569;
+  background: rgba(238, 242, 255, 0.85);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+}
+
+/* Check DATA general (primera columna) */
+#dataPanelGeneral .data-table-saas-general .data-td-check {
+  width: 42px;
+  text-align: center;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 0;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-native {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-ui {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 2px solid #cbd5e1;
+  background: #fff;
+  box-sizing: border-box;
+  pointer-events: none;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-native:focus-visible + .data-check-ui {
+  outline: none;
+  border-color: var(--data-saas-purple);
+  box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.22);
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-native:checked + .data-check-ui {
+  border-color: var(--data-saas-purple-deep);
+  background: linear-gradient(135deg, var(--data-saas-purple-deep) 0%, var(--data-saas-purple) 100%);
+}
+
+#dataPanelGeneral .data-table-saas-general .data-check-native:checked + .data-check-ui::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 8px;
+  margin-top: -1px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Nombre + marca plataforma */
+#dataModule .data-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+#dataModule .data-name-text {
+  min-width: 0;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#dataModule .data-plat-ico {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+#dataModule .data-plat-ico--meta {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+#dataModule .data-plat-ico--google {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+#dataModule .data-plat-ico--neutral {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-td-gasto {
+  font-weight: 750;
+  color: var(--data-saas-purple-deep);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#dataPanelGeneral .data-table-saas-general .data-td-leads {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Badges estado — DATA general */
+#dataPanelGeneral .data-table-saas-general .data-td-estado {
+  text-align: center;
+}
+
+#dataPanelGeneral .data-general-estado-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-weight: 750;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#dataPanelGeneral .data-general-estado-badge--ok {
+  background: rgba(209, 250, 229, 0.95);
+  color: #166534;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.38);
+}
+
+#dataPanelGeneral .data-general-estado-badge--off {
+  background: rgba(243, 244, 246, 0.96);
+  color: #4b5563;
+  box-shadow: 0 0 0 1px rgba(209, 213, 219, 0.9);
+}
+
+#dataPanelGeneral .data-general-estado-badge--muted {
+  background: rgba(241, 245, 249, 0.95);
+  color: #475569;
+  box-shadow: 0 0 0 1px rgba(203, 213, 225, 0.8);
+}
+
+#dataPanelGeneral .data-general-estado-badge--err {
+  background: rgba(254, 226, 226, 0.95);
+  color: #b91c1c;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.6);
+}
+
+#dataPanelGeneral .data-table-saas-general tbody tr.data-row-selected .data-general-estado-badge {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45);
+}
+
+#dataPanelGeneral .data-table-saas-general .data-td-actions {
+  width: 48px;
+  text-align: center;
+}
+
+#dataPanelGeneral .data-row-actions-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+#dataPanelGeneral .data-row-actions-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+}
+
+/* Totales + paginación */
+#dataModule .data-totals-row-saas td {
+  background: linear-gradient(180deg, #f1f5f9 0%, #e8eef4 100%) !important;
+  font-weight: 700;
+  color: #0f172a;
+  border-top: 2px solid rgba(148, 163, 184, 0.45);
+}
+
+#dataModule .data-pagination-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(226, 232, 240, 0.95);
+  background: #fafbfc;
+  border-radius: 0 0 12px 12px;
+}
+
+#dataModule .data-pagination-info {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+#dataModule .data-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+#dataModule .data-page-size-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+#dataModule .data-page-size-field select {
+  border-radius: 8px;
+  border: 1px solid rgba(226, 232, 240, 0.98);
+  padding: 6px 28px 6px 10px;
+  font-family: inherit;
+  font-weight: 650;
+  background: #fff;
+  color: #334155;
+}
+
+#dataModule .data-page-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#dataModule .data-page-nav {
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 10px !important;
+  font-size: 1.1rem;
+  font-weight: 700;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  background: #fff !important;
+  border: 1px solid rgba(226, 232, 240, 0.98) !important;
+  color: #334155 !important;
+}
+
+#dataModule .data-page-nav:hover:not(:disabled):not(.is-disabled) {
+  border-color: var(--data-saas-purple) !important;
+  color: var(--data-saas-purple-deep) !important;
+}
+
+#dataModule .data-page-nav:disabled,
+#dataModule .data-page-nav.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+#dataModule .data-page-indicator {
+  min-width: 40px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.88rem;
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.35);
-  box-shadow: none;
+  background: linear-gradient(135deg, var(--data-saas-purple-deep) 0%, var(--data-saas-purple) 100%);
+  box-shadow: 0 2px 10px rgba(109, 40, 217, 0.28);
+}
+
+#dataModule .data-adv-filters-wrap {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+}
+
+#dataModule .data-adv-filters-hint {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #64748b;
 }
 
 #dataModule .data-table-saas-ads .data-anuncio-estado-select {
@@ -9719,15 +10406,192 @@ body.dark-mode #mainAppShell .planning-table td {
   border-color: rgba(148, 163, 184, 0.25) !important;
 }
 
+body.dark-mode #mainAppShell #planningModule .planning-kpi-card,
+body.dark-mode #mainAppShell #planningModule .toolbar-row-saas,
+body.dark-mode #mainAppShell #planningModule .table-card-planning-saas,
+body.dark-mode #mainAppShell #planningModule .planning-adv-filters-panel {
+  background: #1e293b !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-kpi-label,
+body.dark-mode #mainAppShell #planningModule .planning-kpi-sub {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-kpi-value {
+  color: #f1f5f9 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-page-title-main {
+  color: #f8fafc !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-page-lead {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-filter-label {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-filter-control {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.35) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-campaign-sub,
+body.dark-mode #mainAppShell #planningModule .planning-tracking-label {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-presupuesto-val {
+  color: #f1f5f9 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-mes-muted {
+  background: rgba(15, 23, 42, 0.5) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody .sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody .sticky-col-program {
+  background: #1e293b !important;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.25);
+}
+
 body.dark-mode #mainAppShell .group-header {
   background: #020617 !important;
   color: #f8fafc !important;
 }
 
-body.dark-mode #mainAppShell #dataModule .data-saas-hero,
 body.dark-mode #mainAppShell #dataModule .data-table-card-saas {
   background: #111827 !important;
   border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-kpi-num,
+body.dark-mode #mainAppShell #dataModule .data-name-text {
+  color: #f1f5f9 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-kpi-hint,
+body.dark-mode #mainAppShell #dataModule .data-kpi-label,
+body.dark-mode #mainAppShell #dataModule .data-pagination-info {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-load-notice {
+  background: rgba(30, 41, 59, 0.85) !important;
+  border-color: rgba(99, 102, 241, 0.25) !important;
+  color: #cbd5e1 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-kpi-card {
+  background: #1e293b !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-subtabs-saas {
+  background: rgba(30, 27, 60, 0.55) !important;
+  border-color: rgba(139, 92, 246, 0.2) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-subtabs-saas .data-subtab:not(.data-subtab-active) {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-actions-saas {
+  background: rgba(15, 23, 42, 0.85) !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-status-saas.data-status {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-filters-saas {
+  background: rgba(15, 23, 42, 0.72) !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-filter-saas-field input,
+body.dark-mode #mainAppShell #dataModule .data-filter-saas-field select {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.35) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-table-saas-general th,
+body.dark-mode #mainAppShell #dataModule .data-table-saas-general td {
+  border-color: rgba(148, 163, 184, 0.22) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-table-saas-general thead th {
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+  color: #e2e8f0 !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-table-saas-general tbody tr:hover td {
+  background: rgba(139, 92, 246, 0.12) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-pagination-bar {
+  background: #0f172a !important;
+  border-top-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-page-size-field select {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.38) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-page-nav:not(:disabled):not(.is-disabled) {
+  background: #1e293b !important;
+  color: #f1f5f9 !important;
+  border-color: rgba(148, 163, 184, 0.38) !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-totals-row-saas td {
+  background: linear-gradient(180deg, #1e293b 0%, #172033 100%) !important;
+  color: #f8fafc !important;
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-table-saas-general .data-check-ui {
+  background: #0f172a !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-table-saas-general .data-row-actions-btn {
+  color: #cbd5e1 !important;
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-table-saas-general .data-row-actions-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-general-estado-badge--off,
+body.dark-mode #mainAppShell #dataPanelGeneral .data-general-estado-badge--muted {
+  background: rgba(51, 65, 85, 0.9) !important;
+  color: #e2e8f0 !important;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-general-estado-badge--ok {
+  background: rgba(6, 78, 59, 0.55) !important;
+  color: #86efac !important;
+}
+
+body.dark-mode #mainAppShell #dataPanelGeneral .data-general-estado-badge--err {
+  background: rgba(127, 29, 29, 0.45) !important;
+  color: #fecaca !important;
+}
+
+body.dark-mode #mainAppShell #dataModule .data-plat-ico--neutral {
+  background: rgba(148, 163, 184, 0.15) !important;
+  color: #cbd5e1 !important;
 }
 
 body.dark-mode #mainAppShell #relacionesModule .rel-main-table-card,

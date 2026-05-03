@@ -15,8 +15,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         localStorage.setItem("planning_data", JSON.stringify(data.planning_data));
         localStorage.setItem("catalogos_sistema", JSON.stringify(data.catalogos_sistema));
         localStorage.setItem("data_general", JSON.stringify(data.data_general));
-        localStorage.setItem("data_demograficos", JSON.stringify(data.data_demograficos));
-        localStorage.setItem("data_geograficos", JSON.stringify(data.data_geograficos));
         localStorage.setItem("data_ads_report", JSON.stringify(data.data_ads_report));
         localStorage.setItem("data_anuncios", JSON.stringify(data.data_anuncios));
         localStorage.setItem("relaciones", JSON.stringify(data.relaciones));
@@ -74,6 +72,10 @@ const bitacoraFiltroTipoSelect = document.getElementById("bitacoraFiltroTipo");
 const bitacoraFiltroProgramaInput = document.getElementById("bitacoraFiltroPrograma");
 const bitacoraFechaRangoInput = document.getElementById("bitacoraFechaRango");
 const bitacoraAplicarRangoBtn = document.getElementById("bitacoraAplicarRangoBtn");
+/** Rango del toolbar Planning (filtro por solape de fechas) */
+let planningFechaRangoPicker = null;
+let planningFilterFechaIni = "";
+let planningFilterFechaFin = "";
 
 /** Cada elemento = un registro (un intake) */
 const records = [];
@@ -1024,6 +1026,15 @@ function refreshPlanningToolbarFilterCombos() {
   const intakeF = filterIntake?.value || "";
   fillHtmlSelectFromCatalog(filterTipo, `<option value="">Todos</option>`, catalogosSistema.tipos, tipoF);
   fillHtmlSelectFromCatalog(filterIntake, `<option value="">Todos</option>`, catalogosSistema.intakes, intakeF);
+  const platSel = document.getElementById("filterPlataformaPlanning");
+  if (platSel instanceof HTMLSelectElement) {
+    fillHtmlSelectFromCatalog(
+      platSel,
+      `<option value="">Todos</option>`,
+      catalogosSistema.plataformas,
+      platSel.value || ""
+    );
+  }
 }
 
 function refreshPlanningCatalogUi() {
@@ -1460,6 +1471,12 @@ function buildRecordRow(record) {
   const { monthlyInvestment, monthlyLeads, monthlyCpl } = computeMonthlyArraysForRecordWithOverrides(record, year);
   const monthlyDays = countDaysByMonthForRangeInYear(record.fechaInicio, record.fechaFin, year);
   const t = (s) => escapeHtml(String(s ?? ""));
+  const estadoRow = planningEstadoCampana(record);
+  const estadoBadge = `<span class="${planningEstadoBadgeClass(estadoRow)}">${t(estadoRow)}</span>`;
+  const subParts = [];
+  if (String(record.intake || "").trim()) subParts.push(t(record.intake));
+  if (String(record.tipo || "").trim()) subParts.push(t(record.tipo));
+  const subLine = subParts.join(" · ");
   const row = document.createElement("tr");
   row.setAttribute("data-record-id", rid);
   const metas = record.metas || {};
@@ -1472,40 +1489,58 @@ function buildRecordRow(record) {
         else cellText = String(raw);
       }
       const cls = idx === 4 ? "group-end" : "";
-      return `<td class="${cls}" data-meta-key="${key}" data-record-id="${rid}">${t(cellText)}</td>`;
+      return `<td class="${cls} planning-meta-cell" data-meta-key="${key}" data-record-id="${rid}">${t(cellText)}</td>`;
     })
     .join("");
+  const mxInv = monthlyInvestment.reduce((a, v) => Math.max(a, Number(v) || 0), 0);
+  const mxLead = monthlyLeads.reduce((a, v) => Math.max(a, Math.round(Number(v) || 0)), 0);
+  const mxCpl = monthlyCpl.reduce((a, v) => Math.max(a, Number(v) || 0), 0);
   const configCells = `
-    <td data-planning-edit="intake" data-record-id="${rid}">${t(record.intake)}</td>
-    <td data-planning-edit="fechaInicio" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaInicio))}</td>
-    <td data-planning-edit="fechaFin" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaFin))}</td>
-    <td data-planning-edit="plataforma" data-record-id="${rid}">${t(record.plataforma)}</td>
-    <td data-planning-edit="tracking" data-record-id="${rid}">${t(record.tracking)}</td>
-    <td data-planning-edit="presupuesto" data-record-id="${rid}">${escapeHtml(formatMoney(record.presupuesto) || "")}</td>
-    <td class="group-end" data-planning-edit="leads" data-record-id="${rid}">${t(record.leads)}</td>
+    <td class="planning-body-cell planning-cell-intake" data-planning-edit="intake" data-record-id="${rid}">${t(record.intake)}</td>
+    <td class="planning-body-cell" data-planning-edit="fechaInicio" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaInicio))}</td>
+    <td class="planning-body-cell" data-planning-edit="fechaFin" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaFin))}</td>
+    <td class="planning-body-cell planning-cell-plat" data-planning-edit="plataforma" data-record-id="${rid}">${planningPlataformaCellHtml(record.plataforma)}</td>
+    <td class="planning-body-cell planning-cell-tracking" data-planning-edit="tracking" data-record-id="${rid}"><span class="planning-tracking-label">${t(record.tracking)}</span></td>
+    <td class="planning-body-cell planning-presupuesto-cell" data-planning-edit="presupuesto" data-record-id="${rid}"><span class="planning-presupuesto-val">${escapeHtml(formatMoney(record.presupuesto) || "")}</span></td>
+    <td class="group-end planning-body-cell planning-leads-total-cell" data-planning-edit="leads" data-record-id="${rid}"><span class="planning-leads-total-chip">${t(record.leads)}</span></td>
   `;
   const invCells = Array.from({ length: 12 }, (_, i) => {
     const cls = i === 11 ? "group-end" : "";
-    if (monthlyDays[i] === 0) return `<td class="${cls}"></td>`;
-    return `<td class="${cls} planning-cell-mes-inv" data-mcol-inv="${i}" data-record-id="${rid}">${escapeHtml(formatMoney(monthlyInvestment[i]) || "")}</td>`;
+    if (monthlyDays[i] === 0) return `<td class="${cls} planning-mes-muted"></td>`;
+    const v = monthlyInvestment[i];
+    const tier = planningPillTier(v, mxInv);
+    const inner = escapeHtml(formatMoney(v) || "");
+    return `<td class="${cls} planning-cell-mes-inv" data-mcol-inv="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-inv ${tier}">${inner}</span></td>`;
   }).join("");
   const leadCells = monthlyLeads
     .map((n, i) => {
       const cls = i === 11 ? "group-end" : "";
-      if (monthlyDays[i] === 0) return `<td class="${cls}"></td>`;
-      return `<td class="${cls} planning-cell-mes-lead" data-mcol-lead="${i}" data-record-id="${rid}">${t(String(n))}</td>`;
+      if (monthlyDays[i] === 0) return `<td class="${cls} planning-mes-muted"></td>`;
+      const rn = Math.round(Number(n) || 0);
+      const tier = planningPillTier(rn, mxLead);
+      return `<td class="${cls} planning-cell-mes-lead" data-mcol-lead="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-lead ${tier}">${t(String(rn))}</span></td>`;
     })
     .join("");
   const cplCells = monthlyCpl
     .map((n, i) => {
       const cls = i === 11 ? "group-end" : "";
-      if (monthlyDays[i] <= 0) return `<td class="${cls}"></td>`;
-      return `<td class="${cls} planning-cell-mes-cpl" data-mcol-cpl="${i}" data-record-id="${rid}">${n > 0 ? escapeHtml(formatCpl(n) || "") : ""}</td>`;
+      if (monthlyDays[i] <= 0) return `<td class="${cls} planning-mes-muted"></td>`;
+      const inner = n > 0 ? escapeHtml(formatCpl(n) || "") : "";
+      const tier = n > 0 ? planningPillTier(n, mxCpl) : "planning-pill-tier--ghost";
+      return `<td class="${cls} planning-cell-mes-cpl" data-mcol-cpl="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-cpl ${tier}">${inner}</span></td>`;
     })
     .join("");
   row.innerHTML = `
-    <td class="sticky-col-tipo" data-planning-edit="tipo" data-record-id="${rid}">${t(record.tipo)}</td>
-    <td class="sticky-col-program group-end" data-planning-edit="programa" data-record-id="${rid}">${t(record.programa)}</td>
+    <td class="sticky-col-tipo planning-sticky-tipo" data-planning-edit="tipo" data-record-id="${rid}"><span class="${planningTipoBadgeClassFromTipo(record.tipo)}">${t(record.tipo)}</span></td>
+    <td class="sticky-col-program group-end planning-sticky-program" data-planning-edit="programa" data-record-id="${rid}">
+      <div class="planning-campaign-cell">
+        <strong class="planning-campaign-name">${t(record.programa)}</strong>
+        <div class="planning-campaign-meta">
+          <span class="planning-campaign-sub">${subLine || "—"}</span>
+          ${estadoBadge}
+        </div>
+      </div>
+    </td>
     ${metaCells}
     ${configCells}
     ${invCells}${leadCells}${cplCells}`;
@@ -1610,15 +1645,119 @@ function setPlanningMonthlyCplFromCell(record, monthIdx, rawText) {
   syncRecordBudgetTotalsFromComputedMonths(record);
 }
 
+function planningEstadoCampana(record) {
+  const fi = parseDateInput(record.fechaInicio);
+  const ff = parseDateInput(record.fechaFin);
+  if (!fi || !ff) return "Borrador";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (ff < today) return "Pausada";
+  if (fi > today) return "Programada";
+  return "Activa";
+}
+
+function planningRecordOverlapsToolbarDateFilter(record) {
+  if (!planningFilterFechaIni || !planningFilterFechaFin) return true;
+  return dateRangesOverlap(
+    record.fechaInicio,
+    record.fechaFin,
+    planningFilterFechaIni,
+    planningFilterFechaFin
+  );
+}
+
+function planningPillTier(value, mx) {
+  const n = Number(value) || 0;
+  if (n <= 0) return "planning-pill-tier--ghost";
+  if (!(mx > 0)) return "planning-pill-tier--md";
+  const r = n / mx;
+  if (r >= 0.72) return "planning-pill-tier--hi";
+  if (r >= 0.38) return "planning-pill-tier--md";
+  return "planning-pill-tier--lo";
+}
+
+function planningTipoBadgeClassFromTipo(tipo) {
+  const t = String(tipo || "").toLowerCase();
+  if (t.includes("charla")) return "planning-tipo-badge planning-tipo-badge--charla";
+  if (t.includes("webinar")) return "planning-tipo-badge planning-tipo-badge--webinar";
+  if (t.includes("alcance")) return "planning-tipo-badge planning-tipo-badge--alcance";
+  if (t.includes("di") || t === "di") return "planning-tipo-badge planning-tipo-badge--di";
+  if (
+    t.includes("convers") ||
+    t.includes("conversion") ||
+    t.includes("tráfico") ||
+    t.includes("trafico")
+  ) return "planning-tipo-badge planning-tipo-badge--conv";
+  return "planning-tipo-badge planning-tipo-badge--default";
+}
+
+function planningEstadoBadgeClass(estado) {
+  switch (estado) {
+    case "Activa":
+      return "planning-status-badge planning-status-badge--activa";
+    case "Programada":
+      return "planning-status-badge planning-status-badge--programada";
+    case "Pausada":
+      return "planning-status-badge planning-status-badge--pausada";
+    default:
+      return "planning-status-badge planning-status-badge--borrador";
+  }
+}
+
+function planningPlataformaCellHtml(platform) {
+  const p = String(platform || "").trim();
+  const pl = p.toLowerCase();
+  let iconClass = "fa-solid fa-bullhorn";
+  let mod = "planning-plat--default";
+  if (pl.includes("meta") || pl.includes("facebook") || pl.includes("instagram")) {
+    iconClass = "fa-brands fa-facebook-f";
+    mod = "planning-plat--meta";
+  } else if (pl.includes("google")) {
+    iconClass = "fa-brands fa-google";
+    mod = "planning-plat--google";
+  } else if (pl.includes("tiktok")) {
+    iconClass = "fa-brands fa-tiktok";
+    mod = "planning-plat--tiktok";
+  } else if (pl.includes("linkedin")) {
+    iconClass = "fa-brands fa-linkedin-in";
+    mod = "planning-plat--linkedin";
+  }
+  const disp = escapeHtml(p || "—");
+  return `<span class="planning-plat-cell ${mod}"><i class="${iconClass}" aria-hidden="true"></i><span>${disp}</span></span>`;
+}
+
 function getFilteredRecords() {
   const tipo = filterTipo?.value || "";
   const programaEnabled = filterPrograma && !filterPrograma.disabled;
   const programaQ = programaEnabled ? (filterPrograma.value || "").trim().toLowerCase() : "";
   const intake = filterIntake?.value || "";
+  const platEl = document.getElementById("filterPlataformaPlanning");
+  const plat = platEl instanceof HTMLSelectElement ? String(platEl.value || "").trim() : "";
+  const estEl = document.getElementById("filterEstadoPlanning");
+  const estadoFiltro = estEl instanceof HTMLSelectElement ? String(estEl.value || "").trim() : "";
+  const qEl = document.getElementById("planningToolbarSearch");
+  const q = qEl instanceof HTMLInputElement ? String(qEl.value || "").trim().toLowerCase() : "";
   const filtered = records.filter((r) => {
     if (tipo && r.tipo !== tipo) return false;
     if (intake && r.intake !== intake) return false;
     if (programaQ && !String(r.programa || "").toLowerCase().includes(programaQ)) return false;
+    if (plat && String(r.plataforma || "").trim() !== plat) return false;
+    if (estadoFiltro && planningEstadoCampana(r) !== estadoFiltro) return false;
+    if (!planningRecordOverlapsToolbarDateFilter(r)) return false;
+    if (q) {
+      const blob = [
+        r.programa,
+        r.tipo,
+        r.tracking,
+        r.plataforma,
+        r.intake,
+        r.fechaInicio,
+        r.fechaFin,
+      ]
+        .map((x) => String(x || "").toLowerCase())
+        .join(" ");
+      if (!blob.includes(q)) return false;
+    }
     return true;
   });
   return filtered.sort((a, b) =>
@@ -1654,10 +1793,51 @@ function updateFilterProgramaState() {
   }
 }
 
+function updatePlanningKpis() {
+  const list = getFilteredRecords();
+  let inv = 0;
+  let activas = 0;
+  let impEst = 0;
+  let clkEst = 0;
+  let leadsSum = 0;
+  for (const r of list) {
+    const p = Number(r.presupuesto) || 0;
+    inv += p;
+    if (planningEstadoCampana(r) === "Activa") activas += 1;
+    const L = Math.max(0, Math.round(Number(r.leads) || 0));
+    leadsSum += L;
+    if (L > 0) {
+      impEst += Math.round(L * 420);
+      clkEst += Math.round(L * 22);
+    } else {
+      impEst += Math.round(p * 28);
+      clkEst += Math.round(Math.max(p * 0.9, 0));
+    }
+  }
+  const valorLeadRef = 45;
+  const roas = inv > 0 ? (leadsSum * valorLeadRef) / inv : 0;
+  const invStr = formatMoney(inv) || "$0";
+  if (totalInversionValue) totalInversionValue.textContent = invStr;
+  const setTxt = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  };
+  const fmtK = (n) => {
+    const x = Math.round(Number(n) || 0);
+    if (x >= 1_000_000) return `${(x / 1_000_000).toFixed(1)}M`;
+    if (x >= 10_000) return `${Math.round(x / 1000)}k`;
+    return String(x);
+  };
+  setTxt("planningKpiInversion", invStr);
+  setTxt("planningKpiActivas", String(activas));
+  setTxt("planningKpiImpresiones", fmtK(impEst));
+  setTxt("planningKpiClics", fmtK(clkEst));
+  setTxt("planningKpiLeadsTotal", fmtK(leadsSum));
+  setTxt("planningKpiRoas", inv > 0 && leadsSum > 0 && roas > 0 ? `${roas.toFixed(1)}×` : "—");
+}
+
 function updateTotalInversion() {
-  if (!totalInversionValue) return;
-  const sum = getFilteredRecords().reduce((acc, r) => acc + Number(r.presupuesto || 0), 0);
-  totalInversionValue.textContent = formatMoney(sum) || "$0";
+  updatePlanningKpis();
 }
 
 function updateActionButtons() {
@@ -3044,6 +3224,30 @@ filterPrograma?.addEventListener("input", () => {
   rebuildPlanningTable();
 });
 
+document.getElementById("filterPlataformaPlanning")?.addEventListener("change", () => {
+  rebuildPlanningTable();
+});
+document.getElementById("filterEstadoPlanning")?.addEventListener("change", () => {
+  rebuildPlanningTable();
+});
+document.getElementById("planningToolbarSearch")?.addEventListener("input", () => {
+  rebuildPlanningTable();
+});
+
+document.getElementById("planningFiltrosAvanzadosBtn")?.addEventListener("click", () => {
+  const panel = document.getElementById("planningAdvFiltersPanel");
+  const btn = document.getElementById("planningFiltrosAvanzadosBtn");
+  if (!panel || !btn) return;
+  panel.classList.toggle("hidden");
+  const nowHidden = panel.classList.contains("hidden");
+  panel.setAttribute("aria-hidden", nowHidden ? "true" : "false");
+  btn.setAttribute("aria-expanded", nowHidden ? "false" : "true");
+});
+
+document.getElementById("planningImportTableBtn")?.addEventListener("click", () => {
+  document.getElementById("importDataFileInput")?.click();
+});
+
 planningBody?.addEventListener("dblclick", (event) => {
   event.stopPropagation();
   const target = event.target;
@@ -3260,6 +3464,7 @@ updateActionButtons();
 updateTotalInversion();
 syncCatalogosSistemaDesdeMemoria();
 refreshPlanningCatalogUi();
+initPlanningDateRangePicker();
 
 // =========================
 // BITÁCORA module
@@ -3395,6 +3600,37 @@ function initBitacoraDateRangePicker() {
     conjunction: " → ",
     altInput: true,
     altFormat: "d M Y"
+  });
+}
+
+function initPlanningDateRangePicker() {
+  const el = document.getElementById("planningFechaRango");
+  if (!el || typeof flatpickr !== "function") return;
+  if (planningFechaRangoPicker) return;
+  const localeEs =
+    (flatpickr.l10ns && (flatpickr.l10ns.es || flatpickr.l10ns.es_default)) || "es";
+  planningFechaRangoPicker = flatpickr(el, {
+    mode: "range",
+    dateFormat: "Y-m-d",
+    locale: localeEs,
+    allowInput: false,
+    clickOpens: true,
+    conjunction: " → ",
+    altInput: true,
+    altFormat: "d M Y",
+    onClose() {
+      if (planningFechaRangoPicker && planningFechaRangoPicker.selectedDates.length >= 2) {
+        const [a, b] = planningFechaRangoPicker.selectedDates;
+        const start = a <= b ? a : b;
+        const end = a <= b ? b : a;
+        planningFilterFechaIni = formatDateInputFromDate(start);
+        planningFilterFechaFin = formatDateInputFromDate(end);
+      } else {
+        planningFilterFechaIni = "";
+        planningFilterFechaFin = "";
+      }
+      rebuildPlanningTable();
+    }
   });
 }
 
@@ -3746,8 +3982,6 @@ function initBitacoraModule() {
 // =========================
 
 let dataReal = [];
-let dataDemografica = [];
-let dataGeografica = [];
 let dataAdsReport = [];
 /** Filas DATA → Anuncios (carga solo desde pestaña Anuncios). */
 let dataAnuncios = [];
@@ -3938,12 +4172,8 @@ let historialCargas = [];
 let erroresData = [];
 /** Último detalle de carga (filas no registradas, avisos) por submódulo DATA. */
 let ultimoDetalleCargaGeneral = null;
-let ultimoDetalleCargaDemograficos = null;
-let ultimoDetalleCargaGeo = null;
 let dataIdSeq = 1;
 let selectedDataIds = new Set();
-let selectedDemographicIds = new Set();
-let selectedGeographicIds = new Set();
 let selectedAnunciosIds = new Set();
 let ultimoDetalleCargaAnuncios = null;
 let adsReportFiltrada = [];
@@ -4007,10 +4237,11 @@ let filtrosCache = {
   nombre: []
 };
 
+/** Paginación pestaña Data — General (1-based). */
+let dataGeneralPageIndex = 1;
+
 const LS_KEYS = {
   dataReal: "data_general",
-  dataDemografica: "data_demograficos",
-  dataGeografica: "data_geograficos",
   dataAdsReport: "data_ads_report",
   dataAnuncios: "data_anuncios",
   campaniasUnicasData: "campaniasUnicasData",
@@ -4062,20 +4293,16 @@ function showDataClearSelectionDialog() {
   return new Promise((resolve) => {
     const overlay = document.getElementById("dataClearModalOverlay");
     const generalChk = document.getElementById("dataClearGeneralChk");
-    const demographicChk = document.getElementById("dataClearDemographicChk");
-    const geographicChk = document.getElementById("dataClearGeographicChk");
     const anunciosChk = document.getElementById("dataClearAnunciosChk");
     const errorEl = document.getElementById("dataClearModalError");
     const confirmBtn = document.getElementById("dataClearConfirmBtn");
     const cancelBtn = document.getElementById("dataClearCancelBtn");
-    if (!overlay || !generalChk || !demographicChk || !geographicChk || !anunciosChk || !errorEl || !confirmBtn || !cancelBtn) {
+    if (!overlay || !generalChk || !anunciosChk || !errorEl || !confirmBtn || !cancelBtn) {
       resolve(null);
       return;
     }
 
     generalChk.checked = false;
-    demographicChk.checked = false;
-    geographicChk.checked = false;
     anunciosChk.checked = false;
     errorEl.textContent = "";
     errorEl.classList.add("hidden");
@@ -4107,11 +4334,9 @@ function showDataClearSelectionDialog() {
     confirmBtn.onclick = () => {
       const selection = {
         general: Boolean(generalChk.checked),
-        demographic: Boolean(demographicChk.checked),
-        geographic: Boolean(geographicChk.checked),
         anuncios: Boolean(anunciosChk.checked)
       };
-      if (!selection.general && !selection.demographic && !selection.geographic && !selection.anuncios) {
+      if (!selection.general && !selection.anuncios) {
         errorEl.textContent = "Debes seleccionar al menos un tipo de data";
         errorEl.classList.remove("hidden");
         return;
@@ -4192,24 +4417,19 @@ function showResetSystemKeyDialog() {
 
 function limpiarDataSeleccionada(selection) {
   const clearGeneral = Boolean(selection?.general);
-  const clearDemographic = Boolean(selection?.demographic);
-  const clearGeographic = Boolean(selection?.geographic);
   const clearAnuncios = Boolean(selection?.anuncios);
-  if (!clearGeneral && !clearDemographic && !clearGeographic && !clearAnuncios) return;
+  if (!clearGeneral && !clearAnuncios) return;
 
   if (clearGeneral) {
     dataReal = [];
     historialCargas = [];
     selectedDataIds = new Set();
     limpiarFiltrosUiDataGeneral();
-  }
-  if (clearDemographic) {
-    dataDemografica = [];
-    selectedDemographicIds = new Set();
-  }
-  if (clearGeographic) {
-    dataGeografica = [];
-    selectedGeographicIds = new Set();
+    const loadNotice = document.getElementById("dataGeneralLoadNotice");
+    if (loadNotice) {
+      loadNotice.textContent = "";
+      loadNotice.classList.add("hidden");
+    }
   }
   if (clearAnuncios) {
     dataAnuncios = [];
@@ -4218,15 +4438,13 @@ function limpiarDataSeleccionada(selection) {
 
   erroresData = [];
   campaniasUnicasData = [];
-  const allRows = dataReal.concat(dataDemografica, dataGeografica, dataAdsReport, dataAnuncios);
+  const allRows = dataReal.concat(dataAdsReport, dataAnuncios);
   dataIdSeq = Math.max(1, ...allRows.map((r) => Number(r._id) || 0)) + 1;
 
   guardarData();
   actualizarFiltrosCache();
   refreshFechaFiltersUI();
   renderTablaData();
-  renderTablaDemografica();
-  renderTablaGeografica();
   renderTablaAnuncios();
   renderTablaCampañas();
   renderRelacionesDataList();
@@ -4251,8 +4469,6 @@ const EXPORT_BUNDLE_KEYS = [
   "planning_data",
   "catalogos_sistema",
   "data_general",
-  "data_demograficos",
-  "data_geograficos",
   "data_ads_report",
   "data_anuncios",
   "relaciones",
@@ -4290,8 +4506,6 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
     data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
-    data_demograficos: leerJsonLocalStorage(LS_KEYS.dataDemografica, "dataDemografica"),
-    data_geograficos: leerJsonLocalStorage(LS_KEYS.dataGeografica, "dataGeografica"),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
@@ -4405,8 +4619,6 @@ function exportarDatosSistema() {
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
     data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
-    data_demograficos: leerJsonLocalStorage(LS_KEYS.dataDemografica, "dataDemografica"),
-    data_geograficos: leerJsonLocalStorage(LS_KEYS.dataGeografica, "dataGeografica"),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
@@ -4442,8 +4654,6 @@ function campatrackDownloadDataJsonBundle() {
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
     data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
-    data_demograficos: leerJsonLocalStorage(LS_KEYS.dataDemografica, "dataDemografica"),
-    data_geograficos: leerJsonLocalStorage(LS_KEYS.dataGeografica, "dataGeografica"),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
@@ -5067,7 +5277,7 @@ function deserializeModelo(list) {
 
 /**
  * Persiste snapshot coherente en localStorage.
- * @param {{ incluirTablasData?: boolean }} [opts] — Si `incluirTablasData === false`, no sobrescribe data_general / demográficos / geográficos (evita borrar DATA en disco cuando el estado en memoria aún no hidrató bien).
+ * @param {{ incluirTablasData?: boolean }} [opts] — Si `incluirTablasData === false`, no sobrescribe data_general / data_anuncios (evita borrar DATA en disco cuando el estado en memoria aún no hidrató bien).
  */
 function guardarTodo(opts = {}) {
   const incluirTablasData = opts.incluirTablasData !== false;
@@ -5075,8 +5285,6 @@ function guardarTodo(opts = {}) {
     localStorage.setItem("planning", JSON.stringify(records));
     if (incluirTablasData) {
       localStorage.setItem("data_general", JSON.stringify(serializeDataReal(dataReal)));
-      localStorage.setItem("data_demograficos", JSON.stringify(serializeDataReal(dataDemografica)));
-      localStorage.setItem("data_geograficos", JSON.stringify(serializeDataReal(dataGeografica)));
       localStorage.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnuncios)));
     }
     localStorage.setItem("relaciones", JSON.stringify(relaciones));
@@ -5093,8 +5301,6 @@ function hasDataGeneralLoaded() {
 
 function hasAnyDataLoaded() {
   return (Array.isArray(dataReal) && dataReal.length > 0) ||
-    (Array.isArray(dataDemografica) && dataDemografica.length > 0) ||
-    (Array.isArray(dataGeografica) && dataGeografica.length > 0) ||
     (Array.isArray(dataAnuncios) && dataAnuncios.length > 0);
 }
 
@@ -5164,8 +5370,6 @@ function syncDataRelacionesModeloConsistency() {
 
 function persistDataState() {
   guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataReal));
-  guardarEnLocalStorage(LS_KEYS.dataDemografica, serializeDataReal(dataDemografica));
-  guardarEnLocalStorage(LS_KEYS.dataGeografica, serializeDataReal(dataGeografica));
   guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReport));
   guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnuncios));
   guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasData);
@@ -5195,13 +5399,9 @@ function persistModeloState() {
 
 function hydratarDesdeLocalStorage() {
   const rawGeneral = cargarDesdeLocalStorage("data_general") ?? cargarDesdeLocalStorage(LS_KEYS.dataReal) ?? cargarDesdeLocalStorage("dataReal");
-  const rawDem = cargarDesdeLocalStorage("data_demograficos") ?? cargarDesdeLocalStorage(LS_KEYS.dataDemografica) ?? cargarDesdeLocalStorage("dataDemografica");
-  const rawGeo = cargarDesdeLocalStorage("data_geograficos") ?? cargarDesdeLocalStorage(LS_KEYS.dataGeografica) ?? cargarDesdeLocalStorage("dataGeografica");
   const rawAds = cargarDesdeLocalStorage("data_ads_report") ?? cargarDesdeLocalStorage(LS_KEYS.dataAdsReport) ?? cargarDesdeLocalStorage("dataAdsReport");
   const rawAnuncios = cargarDesdeLocalStorage("data_anuncios") ?? cargarDesdeLocalStorage(LS_KEYS.dataAnuncios) ?? cargarDesdeLocalStorage("dataAnuncios");
   const storedData = normalizarArrayPersistido(rawGeneral);
-  const storedDem = normalizarArrayPersistido(rawDem);
-  const storedGeo = normalizarArrayPersistido(rawGeo);
   const storedAds = normalizarArrayPersistido(rawAds);
   const storedAnuncios = normalizarArrayPersistido(rawAnuncios);
   const storedUnique = cargarDesdeLocalStorage(LS_KEYS.campaniasUnicasData);
@@ -5210,8 +5410,6 @@ function hydratarDesdeLocalStorage() {
   const storedModelo = cargarDesdeLocalStorage("modelo") ?? cargarDesdeLocalStorage(LS_KEYS.modeloAnalitico);
 
   dataReal = storedData ? deserializeDataReal(storedData) : [];
-  dataDemografica = storedDem ? deserializeDataReal(storedDem) : [];
-  dataGeografica = storedGeo ? deserializeDataReal(storedGeo) : [];
   dataAdsReport = storedAds ? deserializeDataReal(storedAds) : [];
   dataAnuncios = storedAnuncios ? deserializeDataAnuncios(storedAnuncios) : [];
   if (!dataAnuncios.length && dataAdsReport.length) {
@@ -5225,8 +5423,6 @@ function hydratarDesdeLocalStorage() {
     }
   }
   console.log("General:", dataReal.length);
-  console.log("Demo:", dataDemografica.length);
-  console.log("Geo:", dataGeografica.length);
   console.log("Anuncios:", dataAnuncios.length);
   const allCampaignRows = getAllCampaignRows();
   if (allCampaignRows.length) {
@@ -5248,7 +5444,7 @@ function hydratarDesdeLocalStorage() {
   } else {
     pruneRelacionesWithoutData();
   }
-  const allRows = dataReal.concat(dataDemografica, dataGeografica, dataAdsReport, dataAnuncios);
+  const allRows = dataReal.concat(dataAdsReport, dataAnuncios);
   dataIdSeq = Math.max(1, ...allRows.map((r) => Number(r._id) || 0)) + 1;
 }
 
@@ -5312,16 +5508,6 @@ function dataUpsertKeyGeneral(r) {
   return `${dataFechaIsoKey(r)}||${String(r.idCampania ?? "").trim()}`;
 }
 
-/** Clave única DATA demográfica: Fecha + ID campaña + Edad + Sexo. */
-function dataUpsertKeyDemografico(r) {
-  return `${dataFechaIsoKey(r)}||${String(r.idCampania ?? "").trim()}||${String(r.edad ?? "").trim()}||${String(r.sexo ?? "").trim()}`;
-}
-
-/** Clave única DATA geográfica: Fecha + ID campaña + Región. */
-function dataUpsertKeyGeografico(r) {
-  return `${dataFechaIsoKey(r)}||${String(r.idCampania ?? "").trim()}||${String(r.region ?? "").trim()}`;
-}
-
 function mergeDataRowPreservingId(existing, incoming) {
   const id = existing._id;
   return { ...existing, ...incoming, _id: id };
@@ -5331,13 +5517,8 @@ function mergeDataRowPreservingId(existing, incoming) {
  * UPSERT: misma clave → sobrescribe métricas (última fila del lote gana); clave nueva → inserta.
  * @returns {{ data: Array, insertadas: number, actualizadas: number, registrosInsertados: Array }}
  */
-function upsertDataRowsLote(newRows, dataActual, kind) {
-  const keyFn =
-    kind === "demographic"
-      ? dataUpsertKeyDemografico
-      : kind === "geographic"
-        ? dataUpsertKeyGeografico
-        : dataUpsertKeyGeneral;
+function upsertDataRowsLote(newRows, dataActual) {
+  const keyFn = dataUpsertKeyGeneral;
 
   const lastByKey = new Map();
   newRows.forEach((r) => lastByKey.set(keyFn(r), r));
@@ -5475,130 +5656,6 @@ function parseDataConReporte(texto) {
   return { filasLeidas, validas, ignoradas, erroresDetalle, advertenciasDetalle };
 }
 
-function parseDataDemograficaConReporte(texto) {
-  const edadesValidas = new Set(["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]);
-  const lines = String(texto ?? "").split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim() !== "");
-  if (!lines.length) return { filasLeidas: 0, validas: [], ignoradas: 0, erroresDetalle: [], advertenciasDetalle: [] };
-  const rows = lines.map((line) => line.split("\t").map((c) => String(c ?? "").trim()));
-  const startIndex = isHeaderRowData(rows[0]) ? 1 : 0;
-  let filasLeidas = 0; let ignoradas = 0;
-  const validas = [];
-  const erroresDetalle = [];
-  const advertenciasDetalle = [];
-  for (let i = startIndex; i < rows.length; i += 1) {
-    filasLeidas += 1;
-    const cols = rows[i];
-    const erroresFila = [];
-    if (!cols || cols.length < 6) {
-      ignoradas += 1;
-      erroresDetalle.push({
-        fila: i + 1,
-        data: (cols || []).join(" | "),
-        errores: ["Columnas incompletas (se esperan 6 campos)"],
-        tipo: "error"
-      });
-      continue;
-    }
-    const fechaRaw = String(cols[0] ?? "").trim();
-    const fechaFormatoValido = /^\d{4}-\d{2}-\d{2}$/.test(fechaRaw);
-    if (!fechaFormatoValido) erroresFila.push("Fecha inválida (usar YYYY-MM-DD)");
-    const fecha = fechaFormatoValido ? parseFechaData(fechaRaw) : null;
-    if (!fecha) erroresFila.push("Fecha no válida");
-    const idCampania = String(cols[1] ?? "").trim();
-    if (!idCampania) erroresFila.push("ID Campaña vacío");
-    const nombre = String(cols[2] ?? "").trim();
-    if (!nombre) erroresFila.push("Nombre de campaña vacío");
-    const edad = String(cols[3] ?? "").trim() || "Sin dato";
-    if (!edadesValidas.has(edad)) erroresFila.push("Edad inválida");
-    const sexoRaw = String(cols[4] ?? "").trim();
-    const sexoNorm = sexoRaw.toLowerCase();
-    let sexo = "";
-    if (sexoNorm === "male") sexo = "Hombre";
-    else if (sexoNorm === "female") sexo = "Mujer";
-    else if (sexoNorm === "hombre") sexo = "Hombre";
-    else if (sexoNorm === "mujer") sexo = "Mujer";
-    else erroresFila.push(`Campo Sexo inválido (${sexoRaw || "vacío"})`);
-    let leads = limpiarNumero(cols[5]);
-    if (!Number.isFinite(leads)) {
-      advertenciasDetalle.push({
-        fila: i + 1,
-        data: cols.join(" | ").slice(0, 400),
-        errores: ["Leads no numérico o vacío: se registró 0."],
-        tipo: "aviso"
-      });
-      leads = 0;
-    }
-    if (erroresFila.length) {
-      ignoradas += 1;
-      erroresDetalle.push({
-        fila: i + 1,
-        data: cols.join(" | "),
-        errores: erroresFila,
-        tipo: "error"
-      });
-      continue;
-    }
-    validas.push({ fecha, idCampania, nombre, edad, sexo, leads });
-  }
-  return { filasLeidas, validas, ignoradas, erroresDetalle, advertenciasDetalle };
-}
-
-function parseDataGeograficaConReporte(texto) {
-  const lines = String(texto ?? "").split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim() !== "");
-  const vacio = { filasLeidas: 0, validas: [], ignoradas: 0, erroresDetalle: [], advertenciasDetalle: [] };
-  if (!lines.length) return vacio;
-  const rows = lines.map((line) => line.split("\t").map((c) => String(c ?? "").trim()));
-  const startIndex = isHeaderRowData(rows[0]) ? 1 : 0;
-  let filasLeidas = 0;
-  let ignoradas = 0;
-  const validas = [];
-  const erroresDetalle = [];
-  const advertenciasDetalle = [];
-  for (let i = startIndex; i < rows.length; i += 1) {
-    filasLeidas += 1;
-    const cols = rows[i];
-    const filaNum = i + 1;
-    const dataPreview = (cols || []).join(" | ").slice(0, 400);
-    if (!cols || cols.length < 5) {
-      ignoradas += 1;
-      erroresDetalle.push({
-        fila: filaNum,
-        data: dataPreview,
-        errores: [
-          `Se esperan 5 columnas (fecha, ID campaña, nombre campaña, región, leads). Esta fila tiene ${cols?.length ?? 0}.`
-        ],
-        tipo: "error"
-      });
-      continue;
-    }
-    const fecha = parseFechaData(cols[0]);
-    const idCampania = String(cols[1] ?? "").trim();
-    const nombre = String(cols[2] ?? "").trim();
-    const motivos = [];
-    if (!fecha) motivos.push(`Fecha no válida: "${String(cols[0] ?? "").slice(0, 80)}". Use YYYY-MM-DD u otros formatos admitidos.`);
-    if (!idCampania) motivos.push("ID de campaña vacío.");
-    if (!nombre) motivos.push("Nombre de campaña vacío.");
-    if (motivos.length) {
-      ignoradas += 1;
-      erroresDetalle.push({ fila: filaNum, data: dataPreview, errores: motivos, tipo: "error" });
-      continue;
-    }
-    const region = String(cols[3] ?? "").trim() || "Sin dato";
-    let leads = limpiarNumero(cols[4]);
-    if (!Number.isFinite(leads)) {
-      advertenciasDetalle.push({
-        fila: filaNum,
-        data: dataPreview,
-        errores: ["Leads no numérico o vacío: se registró 0."],
-        tipo: "aviso"
-      });
-      leads = 0;
-    }
-    validas.push({ fecha, idCampania, nombre, region, leads });
-  }
-  return { filasLeidas, validas, ignoradas, erroresDetalle, advertenciasDetalle };
-}
-
 function formatFechaDdMmmData(date) {
   const day = String(date.getDate()).padStart(2, "0");
   return `${day}-${MONTHS_EN_SHORT[date.getMonth()] || ""}`;
@@ -5659,6 +5716,76 @@ function limpiarFiltrosUiDataGeneral() {
   if (selDia) selDia.value = "";
   if (idIn) idIn.value = "";
   if (nomIn) nomIn.value = "";
+  dataGeneralPageIndex = 1;
+}
+
+function clampDataGeneralPage(totalRows, pageSize, page) {
+  const size = Math.max(1, pageSize || 50);
+  const maxPage = totalRows <= 0 ? 1 : Math.max(1, Math.ceil(totalRows / size));
+  const p = Number(page) || 1;
+  return Math.min(Math.max(1, p), maxPage);
+}
+
+function inferPlataformaNombreDataGeneral(nombre) {
+  const n = String(nombre || "").toLowerCase();
+  if (/\b(meta|facebook|fb|instagram|ig)\b/.test(n) || n.includes("meta ads")) return "meta";
+  if (/\b(google|adwords|pmax|dsa|youtube ads)\b/.test(n) || n.includes("google ads")) return "google";
+  return "";
+}
+
+function dataCampaignNameCellHtml(nombre) {
+  const plat = inferPlataformaNombreDataGeneral(nombre);
+  const nameEsc = escapeHtml(String(nombre || ""));
+  if (plat === "meta") {
+    return `<div class="data-name-cell"><span class="data-plat-ico data-plat-ico--meta" title="Meta"><i class="fa-brands fa-facebook-f" aria-hidden="true"></i></span><span class="data-name-text">${nameEsc}</span></div>`;
+  }
+  if (plat === "google") {
+    return `<div class="data-name-cell"><span class="data-plat-ico data-plat-ico--google" title="Google Ads"><i class="fa-brands fa-google" aria-hidden="true"></i></span><span class="data-name-text">${nameEsc}</span></div>`;
+  }
+  return `<div class="data-name-cell"><span class="data-plat-ico data-plat-ico--neutral" title=""><i class="fa-solid fa-bullhorn" aria-hidden="true"></i></span><span class="data-name-text">${nameEsc}</span></div>`;
+}
+
+function dataEstadoBadgeHtml(estado) {
+  const e = String(estado ?? "").trim();
+  const low = e.toLowerCase();
+  let mod = "--muted";
+  if (low === "activo") mod = "--ok";
+  else if (low === "inactivo") mod = "--off";
+  else if (low === "error" || low.includes("error")) mod = "--err";
+  const label = e || "—";
+  return `<span class="data-general-estado-badge data-general-estado-badge${mod}">${escapeHtml(label)}</span>`;
+}
+
+function refreshDataGeneralStatusBar() {
+  const el = document.getElementById("dataStatus");
+  if (!el) return;
+  el.textContent = `${selectedDataIds.size} filas seleccionadas | Total acumulado: ${dataReal.length}`;
+}
+
+function updateDataKpisFromGeneral() {
+  const uniq = new Set();
+  let gasto = 0;
+  let leads = 0;
+  let imp = 0;
+  let clics = 0;
+  dataReal.forEach((r) => {
+    const idc = String(r.idCampania ?? "").trim();
+    if (idc) uniq.add(idc);
+    gasto += Number(r.gasto) || 0;
+    leads += Number(r.leads) || 0;
+    imp += Number(r.impresiones) || 0;
+    clics += Number(r.clics) || 0;
+  });
+  const setText = (id, text) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = text;
+  };
+  setText("dataKpiRegistros", formatNumberSmartData(dataReal.length));
+  setText("dataKpiCampanas", formatNumberSmartData(uniq.size));
+  setText("dataKpiGasto", formatCurrencyUSDData(gasto));
+  setText("dataKpiLeads", formatNumberSmartData(leads));
+  setText("dataKpiImpresiones", formatNumberSmartData(imp));
+  setText("dataKpiClics", formatNumberSmartData(clics));
 }
 
 function filtrarData() {
@@ -5695,28 +5822,45 @@ function renderTablaData() {
   const regCount = document.getElementById("dataGeneralRegistrosCount");
   if (regCount) regCount.textContent = String(dataReal.length);
   filtrarData();
+  updateDataKpisFromGeneral();
+
+  const pageSizeEl = document.getElementById("dataPageSize");
+  const pageSize = Math.max(1, parseInt(String(pageSizeEl?.value || "50"), 10) || 50);
+  const totalFiltered = dataFiltrada.length;
+  dataGeneralPageIndex = clampDataGeneralPage(totalFiltered, pageSize, dataGeneralPageIndex);
+  const start = (dataGeneralPageIndex - 1) * pageSize;
+  const slice = dataFiltrada.slice(start, start + pageSize);
+
   tbody.innerHTML = "";
-  let totalGasto = 0, totalLeads = 0, totalImpresiones = 0, totalClics = 0;
+  let totalGasto = 0;
+  let totalLeads = 0;
+  let totalImpresiones = 0;
+  let totalClics = 0;
   dataFiltrada.forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.dataset.dataId = String(row._id);
-    if (selectedDataIds.has(String(row._id))) tr.classList.add("data-row-selected");
-    tr.innerHTML = `
-      <td><input type="checkbox" data-data-check="${escapeHtml(String(row._id))}" ${selectedDataIds.has(String(row._id)) ? "checked" : ""} /></td>
-      <td>${formatFechaDdMmmData(row.fecha)}</td>
-      <td>${escapeHtml(row.idCampania)}</td>
-      <td>${escapeHtml(row.nombre)}</td>
-      <td>${formatCurrencyUSDData(row.gasto)}</td>
-      <td>${formatNumberSmartData(row.leads)}</td>
-      <td>${escapeHtml(row.estado)}</td>
-      <td>${formatNumberSmartData(row.impresiones)}</td>
-      <td>${formatNumberSmartData(row.clics)}</td>
-    `;
-    tbody.appendChild(tr);
     totalGasto += Number(row.gasto) || 0;
     totalLeads += Number(row.leads) || 0;
     totalImpresiones += Number(row.impresiones) || 0;
     totalClics += Number(row.clics) || 0;
+  });
+  slice.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.dataset.dataId = String(row._id);
+    if (selectedDataIds.has(String(row._id))) tr.classList.add("data-row-selected");
+    const rid = escapeHtml(String(row._id));
+    const checked = selectedDataIds.has(String(row._id)) ? "checked" : "";
+    tr.innerHTML = `
+      <td class="data-td-check"><label class="data-check-wrap"><input type="checkbox" class="data-check-native" data-data-check="${rid}" ${checked} /><span class="data-check-ui" aria-hidden="true"></span></label></td>
+      <td>${formatFechaDdMmmData(row.fecha)}</td>
+      <td>${escapeHtml(row.idCampania)}</td>
+      <td class="data-td-name">${dataCampaignNameCellHtml(row.nombre)}</td>
+      <td class="data-td-gasto">${formatCurrencyUSDData(row.gasto)}</td>
+      <td class="data-td-leads">${formatNumberSmartData(row.leads)}</td>
+      <td class="data-td-estado">${dataEstadoBadgeHtml(row.estado)}</td>
+      <td>${formatNumberSmartData(row.impresiones)}</td>
+      <td>${formatNumberSmartData(row.clics)}</td>
+      <td class="data-td-actions"><button type="button" class="data-row-actions-btn" aria-label="Acciones de fila"><i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i></button></td>
+    `;
+    tbody.appendChild(tr);
   });
   const tg = document.getElementById("dataTotalGasto");
   const tl = document.getElementById("dataTotalLeads");
@@ -5726,6 +5870,34 @@ function renderTablaData() {
   if (tl) tl.textContent = formatNumberSmartData(totalLeads);
   if (ti) ti.textContent = formatNumberSmartData(totalImpresiones);
   if (tc) tc.textContent = formatNumberSmartData(totalClics);
+
+  const infoEl = document.getElementById("dataPaginationInfo");
+  const indicator = document.getElementById("dataPageIndicator");
+  const maxPage = totalFiltered <= 0 ? 1 : Math.ceil(totalFiltered / pageSize);
+  if (indicator) {
+    indicator.textContent = maxPage <= 1 ? String(dataGeneralPageIndex) : `${dataGeneralPageIndex} / ${maxPage}`;
+    indicator.title = `Página ${dataGeneralPageIndex} de ${maxPage}`;
+  }
+  if (infoEl) {
+    if (totalFiltered === 0) infoEl.textContent = "Sin registros";
+    else {
+      const endRow = Math.min(start + slice.length, totalFiltered);
+      infoEl.textContent = `Mostrando ${start + 1} a ${endRow} de ${formatNumberSmartData(totalFiltered)} registros`;
+    }
+  }
+  const prevBtn = document.getElementById("dataPagePrev");
+  const nextBtn = document.getElementById("dataPageNext");
+  const canPrev = dataGeneralPageIndex > 1;
+  const canNext = dataGeneralPageIndex < maxPage;
+  if (prevBtn) {
+    prevBtn.disabled = !canPrev;
+    prevBtn.classList.toggle("is-disabled", !canPrev);
+  }
+  if (nextBtn) {
+    nextBtn.disabled = !canNext;
+    nextBtn.classList.toggle("is-disabled", !canNext);
+  }
+  refreshDataGeneralStatusBar();
 }
 
 function generarCampañasUnicas(data) {
@@ -5762,7 +5934,7 @@ function getAllCampaignRows() {
       idCampania: String(r.idCampania).trim(),
       nombre: String(r.nombreCampana).trim()
     }));
-  return dataReal.concat(dataDemografica, dataGeografica, fromAnuncios);
+  return dataReal.concat(fromAnuncios);
 }
 
 function renderTablaCampañas() {
@@ -5812,87 +5984,27 @@ async function eliminarFilasSeleccionadas() {
   actualizarFiltrosCache(); refreshFechaFiltersUI(); renderTablaData(); renderTablaCampañas(); renderRelacionesDataList();
 }
 
-async function eliminarFilasSeleccionadasDemograficas() {
-  if (!selectedDemographicIds.size) return;
-  const ok = await showAppDialog({
-    message: `¿Eliminar ${selectedDemographicIds.size} registros?`,
-    primaryText: "Confirmar",
-    secondaryText: "Cancelar",
-    primaryDanger: true
-  });
-  if (!ok) return;
-  const ids = new Set(Array.from(selectedDemographicIds).map((x) => String(x)));
-  dataDemografica = dataDemografica.filter((r) => !ids.has(String(r._id)));
-  selectedDemographicIds = new Set();
-  guardarData();
-  renderTablaDemografica();
-  renderTablaCampañas();
-  renderRelacionesDataList();
-}
-
-async function eliminarFilasSeleccionadasGeograficas() {
-  if (!selectedGeographicIds.size) return;
-  const ok = await showAppDialog({
-    message: `¿Eliminar ${selectedGeographicIds.size} registros?`,
-    primaryText: "Confirmar",
-    secondaryText: "Cancelar",
-    primaryDanger: true
-  });
-  if (!ok) return;
-  const ids = new Set(Array.from(selectedGeographicIds).map((x) => String(x)));
-  dataGeografica = dataGeografica.filter((r) => !ids.has(String(r._id)));
-  selectedGeographicIds = new Set();
-  guardarData();
-  renderTablaGeografica();
-  renderTablaCampañas();
-  renderRelacionesDataList();
-}
-
 function initDataSubTabs() {
   const tabLoad = document.getElementById("dataTabGeneral");
-  const tabDemographic = document.getElementById("dataTabDemographic");
-  const tabGeographic = document.getElementById("dataTabGeographic");
   const tabAnuncios = document.getElementById("dataTabAnuncios");
   const tabUnique = document.getElementById("dataTabUnique");
   const panelLoad = document.getElementById("dataPanelGeneral");
-  const panelDemographic = document.getElementById("dataPanelDemographic");
-  const panelGeographic = document.getElementById("dataPanelGeographic");
   const panelAnuncios = document.getElementById("dataPanelAnuncios");
   const panelUnique = document.getElementById("dataPanelUnique");
-  if (
-    !tabLoad ||
-    !tabDemographic ||
-    !tabGeographic ||
-    !tabAnuncios ||
-    !tabUnique ||
-    !panelLoad ||
-    !panelDemographic ||
-    !panelGeographic ||
-    !panelAnuncios ||
-    !panelUnique
-  )
-    return;
+  if (!tabLoad || !tabAnuncios || !tabUnique || !panelLoad || !panelAnuncios || !panelUnique) return;
   const set = (which) => {
     dataActiveSubtab = which;
     const isGeneral = which === "general";
-    const isDemographic = which === "demographic";
-    const isGeographic = which === "geographic";
     const isAnuncios = which === "anuncios";
     const isUnique = which === "unique";
     tabLoad.classList.toggle("data-subtab-active", isGeneral);
-    tabDemographic.classList.toggle("data-subtab-active", isDemographic);
-    tabGeographic.classList.toggle("data-subtab-active", isGeographic);
     tabAnuncios.classList.toggle("data-subtab-active", isAnuncios);
     tabUnique.classList.toggle("data-subtab-active", isUnique);
     panelLoad.classList.toggle("hidden", !isGeneral);
-    panelDemographic.classList.toggle("hidden", !isDemographic);
-    panelGeographic.classList.toggle("hidden", !isGeographic);
     panelAnuncios.classList.toggle("hidden", !isAnuncios);
     panelUnique.classList.toggle("hidden", !isUnique);
   };
   tabLoad.addEventListener("click", () => set("general"));
-  tabDemographic.addEventListener("click", () => set("demographic"));
-  tabGeographic.addEventListener("click", () => set("geographic"));
   tabAnuncios.addEventListener("click", () => set("anuncios"));
   tabUnique.addEventListener("click", () => set("unique"));
   set("general");
@@ -5900,39 +6012,26 @@ function initDataSubTabs() {
 
 function initDataLoadModal() {
   const openBtn = document.getElementById("openDataLoadBtn");
-  const openDemographicBtn = document.getElementById("openDemographicLoadBtn");
-  const openGeographicBtn = document.getElementById("openGeographicLoadBtn");
   const openAnunciosBtn = document.getElementById("openAnunciosLoadBtn");
   const modal = document.getElementById("dataLoadModal");
   const closeBtn = document.getElementById("closeDataLoadBtn");
   const processBtn = document.getElementById("processDataBtn");
   const titleEl = document.getElementById("dataLoadTitle");
   const input = document.getElementById("dataInput");
-  if (!openBtn || !openDemographicBtn || !openGeographicBtn || !openAnunciosBtn || !modal || !closeBtn || !processBtn || !input || !titleEl) return;
+  if (!openBtn || !openAnunciosBtn || !modal || !closeBtn || !processBtn || !input || !titleEl) return;
   const open = (which) => {
     dataActiveSubtab = which;
     titleEl.textContent =
-      which === "demographic"
-        ? "Carga de Data Demográfica"
-        : which === "geographic"
-          ? "Carga de Data Geográfica"
-          : which === "anuncios"
-            ? "Carga de Data Anuncios"
-            : "Carga de Data General";
+      which === "anuncios" ? "Carga de Data Anuncios" : "Carga de Data General";
     input.placeholder =
-      which === "demographic"
-        ? "Pega: Fecha, ID Campaña, Nombre Campaña, Edad, Sexo, Resultados (Leads)"
-        : which === "geographic"
-          ? "Pega: Fecha, ID Campaña, Nombre Campaña, Región, Resultados (Leads)"
-          : which === "anuncios"
-            ? "ID campaña[TAB]Nombre campaña[TAB]Nombre anuncio[TAB]Leads[TAB]Gastos[TAB]Impresiones[TAB]Alcance[TAB]Clics[TAB]Estado Activo|Inactivo (opc.)[TAB]Link (opc.)[TAB]Tipo ppl|ppv|carrusel (opc.). Tras «Clics», si la siguiente celda no es URL ni tipo, se interpreta como estado."
-            : "Pega aquí tu data desde Excel...";
+      which === "anuncios"
+        ? "ID campaña[TAB]Nombre campaña[TAB]Nombre anuncio[TAB]Leads[TAB]Gastos[TAB]Impresiones[TAB]Alcance[TAB]Clics[TAB]Estado Activo|Inactivo (opc.)[TAB]Link (opc.)[TAB]Tipo ppl|ppv|carrusel (opc.). Tras «Clics», si la siguiente celda no es URL ni tipo, se interpreta como estado."
+        : "Pega aquí tu data desde Excel...";
     modal.classList.remove("hidden");
   };
   const close = () => modal.classList.add("hidden");
   openBtn.addEventListener("click", () => open("general"));
-  openDemographicBtn.addEventListener("click", () => open("demographic"));
-  openGeographicBtn.addEventListener("click", () => open("geographic"));
+  document.getElementById("openDataLoadBtnHero")?.addEventListener("click", () => open("general"));
   openAnunciosBtn.addEventListener("click", () => open("anuncios"));
   closeBtn.addEventListener("click", close);
   modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
@@ -5960,50 +6059,32 @@ function initDataLoadModal() {
       return;
     }
 
-    const report =
-      dataActiveSubtab === "demographic"
-        ? parseDataDemograficaConReporte(input.value)
-        : dataActiveSubtab === "geographic"
-          ? parseDataGeograficaConReporte(input.value)
-          : parseDataConReporte(input.value);
+    const report = parseDataConReporte(input.value);
     const newRows = report.validas.map((r) => ({ ...r, _id: generateDataRowId() }));
-    let targetList = dataReal;
-    if (dataActiveSubtab === "demographic") targetList = dataDemografica;
-    if (dataActiveSubtab === "geographic") targetList = dataGeografica;
-    const kind =
-      dataActiveSubtab === "demographic" ? "demographic" : dataActiveSubtab === "geographic" ? "geographic" : "general";
-    const { data: merged, insertadas, actualizadas, registrosInsertados } = upsertDataRowsLote(newRows, targetList, kind);
+    const { data: merged, insertadas, actualizadas, registrosInsertados } = upsertDataRowsLote(newRows, dataReal);
     const mergedSorted = ordenarPorFecha(merged);
-    if (dataActiveSubtab === "demographic") dataDemografica = mergedSorted;
-    else if (dataActiveSubtab === "geographic") dataGeografica = mergedSorted;
-    else dataReal = mergedSorted;
+    dataReal = mergedSorted;
     if (registrosInsertados.length) historialCargas.push({ registros: registrosInsertados, timestamp: new Date() });
-    input.value = ""; close();
-    const status = document.getElementById("dataStatus");
-    const statusDem = document.getElementById("dataDemographicStatus");
-    const statusGeo = document.getElementById("dataGeographicStatus");
-    const detailBtnDem = document.getElementById("openDataErrorDetailBtn");
+    input.value = "";
+    close();
     const detailBtnGen = document.getElementById("openDataErrorDetailGeneralBtn");
-    const detailBtnGeo = document.getElementById("openDataErrorDetailGeoBtn");
     const detalleCombinado = combinarDetalleCargaReport(report, []);
-    if (dataActiveSubtab === "demographic") ultimoDetalleCargaDemograficos = detalleCombinado;
-    else if (dataActiveSubtab === "geographic") ultimoDetalleCargaGeo = detalleCombinado;
-    else ultimoDetalleCargaGeneral = detalleCombinado;
+    ultimoDetalleCargaGeneral = detalleCombinado;
     const tieneDetalle = detalleCombinado.length > 0;
     const statusTxt = `${report.filasLeidas} filas leídas | ${insertadas} insertadas | ${actualizadas} actualizadas | ${report.ignoradas} ignoradas.${tieneDetalle ? " Pulsa «Ver detalle de carga» para el motivo de cada fila." : ""} Las campañas podrán vincularse desde el módulo RELACIONES.`;
-    if (dataActiveSubtab === "demographic") {
-      if (statusDem) statusDem.textContent = statusTxt;
-      detailBtnDem?.classList.toggle("hidden", !tieneDetalle);
-    } else if (dataActiveSubtab === "geographic") {
-      if (statusGeo) statusGeo.textContent = statusTxt;
-      detailBtnGeo?.classList.toggle("hidden", !tieneDetalle);
-    } else {
-      if (status) status.textContent = statusTxt;
-      detailBtnGen?.classList.toggle("hidden", !tieneDetalle);
+    const notice = document.getElementById("dataGeneralLoadNotice");
+    if (notice) {
+      notice.textContent = statusTxt;
+      notice.classList.toggle("hidden", !statusTxt.trim());
     }
+    detailBtnGen?.classList.toggle("hidden", !tieneDetalle);
+    refreshDataGeneralStatusBar();
     persistDataState();
-    actualizarFiltrosCache(); refreshFechaFiltersUI();
-    renderTablaData(); renderTablaDemografica(); renderTablaGeografica(); renderTablaCampañas(); renderRelacionesDataList();
+    actualizarFiltrosCache();
+    refreshFechaFiltersUI();
+    renderTablaData();
+    renderTablaCampañas();
+    renderRelacionesDataList();
   });
 }
 
@@ -6066,50 +6147,9 @@ function initDataErrorModal() {
   document.getElementById("openDataErrorDetailGeneralBtn")?.addEventListener("click", () => {
     showDataErrorModal(ultimoDetalleCargaGeneral || [], { title: "Detalle — Data general" });
   });
-  document.getElementById("openDataErrorDetailGeoBtn")?.addEventListener("click", () => {
-    showDataErrorModal(ultimoDetalleCargaGeo || [], { title: "Detalle — Data geográfica" });
-  });
-  document.getElementById("openDataErrorDetailBtn")?.addEventListener("click", () => {
-    showDataErrorModal(ultimoDetalleCargaDemograficos || [], { title: "Detalle — Data demográfica" });
-  });
   document.getElementById("openDataErrorDetailAnunciosBtn")?.addEventListener("click", () => {
     showDataErrorModal(ultimoDetalleCargaAnuncios || [], { title: "Detalle — Data anuncios" });
   });
-}
-
-function renderTablaDemografica() {
-  const tbody = document.getElementById("dataDemographicTbody");
-  if (!tbody) return;
-  const regCount = document.getElementById("dataDemographicRegistrosCount");
-  if (regCount) regCount.textContent = String(dataDemografica.length);
-  tbody.innerHTML = dataDemografica.map((row) => `
-    <tr data-demo-id="${escapeHtml(String(row._id))}" class="${selectedDemographicIds.has(String(row._id)) ? "data-row-selected" : ""}">
-      <td><input type="checkbox" data-demo-check="${escapeHtml(String(row._id))}" ${selectedDemographicIds.has(String(row._id)) ? "checked" : ""} /></td>
-      <td>${formatFechaDdMmmData(row.fecha)}</td>
-      <td>${escapeHtml(row.idCampania)}</td>
-      <td>${escapeHtml(row.nombre)}</td>
-      <td>${escapeHtml(row.edad || "Sin dato")}</td>
-      <td>${escapeHtml(row.sexo || "Otro")}</td>
-      <td>${formatNumberSmartData(Number(row.leads) || 0)}</td>
-    </tr>
-  `).join("");
-}
-
-function renderTablaGeografica() {
-  const tbody = document.getElementById("dataGeographicTbody");
-  if (!tbody) return;
-  const regCount = document.getElementById("dataGeographicRegistrosCount");
-  if (regCount) regCount.textContent = String(dataGeografica.length);
-  tbody.innerHTML = dataGeografica.map((row) => `
-    <tr data-geo-id="${escapeHtml(String(row._id))}" class="${selectedGeographicIds.has(String(row._id)) ? "data-row-selected" : ""}">
-      <td><input type="checkbox" data-geo-check="${escapeHtml(String(row._id))}" ${selectedGeographicIds.has(String(row._id)) ? "checked" : ""} /></td>
-      <td>${formatFechaDdMmmData(row.fecha)}</td>
-      <td>${escapeHtml(row.idCampania)}</td>
-      <td>${escapeHtml(row.nombre)}</td>
-      <td>${escapeHtml(row.region || "Sin dato")}</td>
-      <td>${formatNumberSmartData(Number(row.leads) || 0)}</td>
-    </tr>
-  `).join("");
 }
 
 function ordenarDataAnuncios(rows) {
@@ -6251,12 +6291,24 @@ function initDataFilters() {
   document.getElementById("uniqueSearch")?.addEventListener("input", () => renderTablaCampañas());
   document.getElementById("undoLastLoadBtn")?.addEventListener("click", deshacerUltimaCarga);
   document.getElementById("deleteSelectedDataBtn")?.addEventListener("click", eliminarFilasSeleccionadas);
-  document.getElementById("deleteSelectedDemographicBtn")?.addEventListener("click", eliminarFilasSeleccionadasDemograficas);
-  document.getElementById("deleteSelectedGeographicBtn")?.addEventListener("click", eliminarFilasSeleccionadasGeograficas);
   document.getElementById("deleteSelectedAnunciosBtn")?.addEventListener("click", eliminarFilasSeleccionadasAnuncios);
   document.getElementById("clearStorageBtn")?.addEventListener("click", limpiarSoloModuloData);
+  document.getElementById("dataModuleImportBtn")?.addEventListener("click", () => {
+    document.getElementById("importDataFileInput")?.click();
+  });
+  document.getElementById("dataFiltersAdvancedBtn")?.addEventListener("click", () => {
+    const wrap = document.getElementById("dataAdvFiltersWrap");
+    const btn = document.getElementById("dataFiltersAdvancedBtn");
+    if (!wrap || !btn) return;
+    wrap.classList.toggle("hidden");
+    const hid = wrap.classList.contains("hidden");
+    wrap.setAttribute("aria-hidden", hid ? "true" : "false");
+    btn.setAttribute("aria-expanded", hid ? "false" : "true");
+  });
+
   const delayedFilter = debounce(() => renderTablaData(), 300);
   document.getElementById("dataFilterFechaMes")?.addEventListener("change", () => {
+    dataGeneralPageIndex = 1;
     const mes = document.getElementById("dataFilterFechaMes")?.value || "";
     const daySel = document.getElementById("dataFilterFechaDia");
     if (!daySel) return;
@@ -6264,9 +6316,30 @@ function initDataFilters() {
     daySel.innerHTML = `<option value="">Todos</option>` + days.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join("");
     renderTablaData();
   });
-  document.getElementById("dataFilterFechaDia")?.addEventListener("change", () => renderTablaData());
-  document.getElementById("dataFilterIdInput")?.addEventListener("input", delayedFilter);
-  document.getElementById("dataFilterNombreInput")?.addEventListener("input", delayedFilter);
+  document.getElementById("dataFilterFechaDia")?.addEventListener("change", () => {
+    dataGeneralPageIndex = 1;
+    renderTablaData();
+  });
+  document.getElementById("dataFilterIdInput")?.addEventListener("input", () => {
+    dataGeneralPageIndex = 1;
+    delayedFilter();
+  });
+  document.getElementById("dataFilterNombreInput")?.addEventListener("input", () => {
+    dataGeneralPageIndex = 1;
+    delayedFilter();
+  });
+  document.getElementById("dataPageSize")?.addEventListener("change", () => {
+    dataGeneralPageIndex = 1;
+    renderTablaData();
+  });
+  document.getElementById("dataPagePrev")?.addEventListener("click", () => {
+    dataGeneralPageIndex -= 1;
+    renderTablaData();
+  });
+  document.getElementById("dataPageNext")?.addEventListener("click", () => {
+    dataGeneralPageIndex += 1;
+    renderTablaData();
+  });
   document.getElementById("dataTbody")?.addEventListener("change", (e) => {
     const input = e.target instanceof HTMLElement ? e.target.closest("input[data-data-check]") : null;
     if (!(input instanceof HTMLInputElement)) return;
@@ -6276,26 +6349,7 @@ function initDataFilters() {
     else selectedDataIds.delete(String(id));
     const tr = input.closest("tr");
     if (tr) tr.classList.toggle("data-row-selected", input.checked);
-  });
-  document.getElementById("dataDemographicTbody")?.addEventListener("change", (e) => {
-    const input = e.target instanceof HTMLElement ? e.target.closest("input[data-demo-check]") : null;
-    if (!(input instanceof HTMLInputElement)) return;
-    const id = input.getAttribute("data-demo-check") || "";
-    if (!id) return;
-    if (input.checked) selectedDemographicIds.add(String(id));
-    else selectedDemographicIds.delete(String(id));
-    const tr = input.closest("tr");
-    if (tr) tr.classList.toggle("data-row-selected", input.checked);
-  });
-  document.getElementById("dataGeographicTbody")?.addEventListener("change", (e) => {
-    const input = e.target instanceof HTMLElement ? e.target.closest("input[data-geo-check]") : null;
-    if (!(input instanceof HTMLInputElement)) return;
-    const id = input.getAttribute("data-geo-check") || "";
-    if (!id) return;
-    if (input.checked) selectedGeographicIds.add(String(id));
-    else selectedGeographicIds.delete(String(id));
-    const tr = input.closest("tr");
-    if (tr) tr.classList.toggle("data-row-selected", input.checked);
+    refreshDataGeneralStatusBar();
   });
   document.getElementById("dataAnunciosTbody")?.addEventListener("change", (e) => {
     const sel = e.target;
@@ -9341,7 +9395,6 @@ function fillDashboardMesSelect() {
     Array.from(
       new Set(
         dataReal
-          .concat(dataDemografica, dataGeografica)
           .map((r) => (r?.fecha instanceof Date ? formatMonthYearData(r.fecha) : ""))
           .filter(Boolean)
       )
@@ -10626,50 +10679,6 @@ function getDashboardLinkedCampaignDateWindows() {
   return campaignWindows;
 }
 
-/** Claves de campaña (DATA) presentes en el modelo ya filtrado como el dashboard; sirve para cruzar demográficos/geográficos con programa seleccionado. */
-function getDashboardCampaignKeysForDemoFilter() {
-  const rows = aplicarFiltroBrandingModeloPerformance(getDashboardFilteredData()).filter(
-    (r) => !esTipoBrandingConvocatoriaDashboard(r.tipo)
-  );
-  let filtered = rows;
-  if (programaSeleccionado) {
-    const row = parseDashboardRowKey(programaSeleccionado);
-    filtered = filtered.filter(
-      (r) =>
-        String(r.tipo) === row.tipo &&
-        String(r.programa) === row.programa &&
-        String(r.intake) === row.intake &&
-        String(r.tracking) === row.tracking &&
-        String(r.plataforma) === row.plataforma
-    );
-  }
-  const exact = new Set();
-  const norm = new Set();
-  const idNorm = new Set();
-  filtered.forEach((r) => {
-    exact.add(dashboardCampaignKeyExact(r.idCampania, r.nombre));
-    norm.add(dashboardCampaignKeyNormalized(r.idCampania, r.nombre));
-    const idn = normalizarTexto(r.idCampania);
-    if (idn) idNorm.add(idn);
-  });
-  return { exact, norm, idNorm };
-}
-
-function demoGeoRowPasaFiltrosDashboard(d, mesSeleccionado, campaignSets) {
-  if (!(d?.fecha instanceof Date)) return false;
-  if (formatMonthYearData(d.fecha) !== mesSeleccionado) return false;
-  if (!dashboardDatePassesFilters(d.fecha)) return false;
-  if (!programaSeleccionado) return true;
-  const ex = dashboardCampaignKeyExact(d.idCampania, d.nombre);
-  const nm = dashboardCampaignKeyNormalized(d.idCampania, d.nombre);
-  const idn = normalizarTexto(d.idCampania);
-  return (
-    campaignSets.exact.has(ex) ||
-    campaignSets.norm.has(nm) ||
-    (Boolean(idn) && campaignSets.idNorm.has(idn))
-  );
-}
-
 function agruparSumaResultados(rows, campo) {
   const map = new Map();
   rows.forEach((r) => {
@@ -11065,7 +11074,7 @@ const CAMPATRACK_TOPBAR_META = {
   costos: { title: "Centro de costos", sub: "Presupuestos (bolsas) y consumo vinculado al Planning.", icon: "fa-wallet" },
   planning: { title: "Planning", sub: "Planificación y calendario de campañas.", icon: "fa-calendar-days" },
   bitacora: { title: "Bitácora", sub: "Registro de actividades y seguimiento.", icon: "fa-clipboard-list" },
-  data: { title: "Data", sub: "Tablas de campañas y métricas.", icon: "fa-table" },
+  data: { title: "Data", sub: "Carga, visualización y preparación de data real", icon: "fa-database" },
   relaciones: { title: "Relaciones", sub: "Vinculación entre planning y data.", icon: "fa-diagram-project" },
   modelo: { title: "Modelo", sub: "Modelo analítico del sistema.", icon: "fa-cube" },
   medidas: { title: "Medidas", sub: "Cálculos y fórmulas personalizadas.", icon: "fa-ruler-combined" },
@@ -12432,8 +12441,6 @@ function initTabs() {
       actualizarFiltrosCache();
       refreshFechaFiltersUI();
       renderTablaData();
-      renderTablaDemografica();
-      renderTablaGeografica();
       renderTablaAnuncios();
       renderTablaCampañas();
     }
@@ -12513,8 +12520,6 @@ limpiarFiltrosUiDataGeneral();
 actualizarFiltrosCache();
 refreshFechaFiltersUI();
 renderTablaData();
-renderTablaDemografica();
-renderTablaGeografica();
 renderTablaAnuncios();
 renderTablaCampañas();
 refreshAdsReportFilterOptions();
@@ -12638,13 +12643,10 @@ export {
   dataFechaIsoKey,
   dataRealPasaFiltroPeriodoDashboard,
   dataRowMatchesPlanningContext,
-  dataUpsertKeyDemografico,
   dataUpsertKeyGeneral,
-  dataUpsertKeyGeografico,
   dateRangesOverlap,
   daysInCalendarMonth,
   debounce,
-  demoGeoRowPasaFiltrosDashboard,
   deserializeDataAnuncios,
   deserializeDataReal,
   deserializeModelo,
@@ -12655,8 +12657,6 @@ export {
   ejecutarGuardadoApiTrasImportacionExitosa,
   eliminarFilasSeleccionadas,
   eliminarFilasSeleccionadasAnuncios,
-  eliminarFilasSeleccionadasDemograficas,
-  eliminarFilasSeleccionadasGeograficas,
   ensureCatalogosSistemaShape,
   ensureDashboardInitialMonth,
   ensureMedidasDefaults,
@@ -12715,7 +12715,6 @@ export {
   getCampatrackLoginPageUrl,
   getCampatrackRole,
   getCentroCostoKey,
-  getDashboardCampaignKeysForDemoFilter,
   getDashboardChartDateRange,
   getDashboardDataDateBoundsFromModelo,
   getDashboardDiasRestantesMetaGlobal,
@@ -12846,8 +12845,6 @@ export {
   parseDashboardRowKey,
   parseDataAnunciosConReporte,
   parseDataConReporte,
-  parseDataDemograficaConReporte,
-  parseDataGeograficaConReporte,
   parseDateInput,
   parseFechaData,
   parseMonthYearData,
@@ -12922,8 +12919,6 @@ export {
   renderSugerencias,
   renderTablaAnuncios,
   renderTablaData,
-  renderTablaDemografica,
-  renderTablaGeografica,
   resetearSistemaCompleto,
   resetProgramsFromDefaults,
   resolveCentroCostoByValue,
