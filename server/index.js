@@ -84,7 +84,20 @@ async function handlePostCampaignData(req, res) {
       return res.status(400).json({ error: "user_id y data son requeridos" });
     }
 
+    const replace =
+      req.query?.replace === "1" ||
+      req.query?.replace === "true" ||
+      req.body?.replace_user_campaign_data === true;
+
     const pool = await getPool();
+
+    if (replace) {
+      await pool
+        .request()
+        .input("user_id", sql.VarChar(255), user_id)
+        .query(`DELETE FROM campaign_data WHERE user_id = @user_id`);
+    }
+
     const dataPayload = typeof data === "string" ? data : JSON.stringify(data);
 
     await pool
@@ -131,7 +144,7 @@ app
         return res.json({ data: null });
       }
 
-      const raw =
+      let raw =
         row.data !== undefined && row.data !== null
           ? row.data
           : row.DATA !== undefined && row.DATA !== null
@@ -179,9 +192,74 @@ app
 
 app.post("/api/save-all", handlePostCampaignData);
 
+/**
+ * Desenrolla un backup descargado con GET /api/data (`{ data: bundle }`) al objeto `bundle`
+ * que se persiste en columna (mismo formato que POST /api/data / save-all).
+ */
+function normalizeImportBodyForDb(data) {
+  if (data == null || typeof data !== "object" || Array.isArray(data)) return data;
+  if (!Object.prototype.hasOwnProperty.call(data, "data")) return data;
+  const inner = data.data;
+  if (inner == null || typeof inner !== "object" || Array.isArray(inner)) return data;
+  const hints = [
+    "planning_data",
+    "data_general",
+    "cc_data",
+    "programs",
+    "relaciones",
+    "bitacora_data",
+    "data_ads_report",
+    "data_anuncios",
+    "catalogos_sistema"
+  ];
+  const innerLooksBundle = hints.some((k) => Object.prototype.hasOwnProperty.call(inner, k));
+  const topLooksBundle = hints.some((k) => Object.prototype.hasOwnProperty.call(data, k));
+  if (innerLooksBundle && !topLooksBundle) return inner;
+  return data;
+}
+
+/** Reemplaza por completo la fila de campaña del usuario (sin transformar el bundle salvo unwrap de export). */
+app.post("/api/import-data", async (req, res) => {
+  try {
+    const user_id =
+      typeof req.body?.user_id === "string"
+        ? req.body.user_id.trim()
+        : String(req.body?.user_id ?? "").trim();
+    let data = req.body?.data;
+
+    if (!user_id || data === undefined || data === null) {
+      return res.status(400).json({ ok: false, error: "user_id y data son requeridos" });
+    }
+
+    const toStore = normalizeImportBodyForDb(data);
+    if (toStore == null || typeof toStore !== "object" || Array.isArray(toStore)) {
+      return res.status(400).json({ ok: false, error: "data debe ser un objeto JSON" });
+    }
+
+    const pool = await getPool();
+    const dataPayload = typeof toStore === "string" ? toStore : JSON.stringify(toStore);
+
+    await pool.request().input("user_id", sql.VarChar(255), user_id).query(`DELETE FROM campaign_data WHERE user_id = @user_id`);
+
+    await pool
+      .request()
+      .input("user_id", sql.VarChar(255), user_id)
+      .input("data", sql.NVarChar(sql.MAX), dataPayload)
+      .query(
+        `INSERT INTO campaign_data (user_id, data, created_at)
+         VALUES (@user_id, @data, GETDATE())`
+      );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/import-data", err);
+    res.status(500).json({ ok: false, error: "Error importando data" });
+  }
+});
+
 const server = app.listen(PORT, () => {
   console.log(`CampaTrack API escuchando en http://localhost:${PORT}`);
-  console.log("Rutas: POST /api/login | GET+POST /api/data | POST /api/save-all");
+  console.log("Rutas: POST /api/login | GET+POST /api/data | POST /api/save-all | POST /api/import-data");
   void getPool().catch((e) => {
     console.error("No se pudo conectar a SQL Server al arranque:", e?.message || e);
   });

@@ -665,8 +665,13 @@ function applyCcBitacoraModeloRuntimeFromDraftOrBundle(source) {
     sortBitacoraRowsNewestFirst(rows);
     rows.forEach((r) => bitacoraData.push(r));
   }
-  if (Array.isArray(source.modelo)) {
-    const rows = deserializeModelo(source.modelo);
+  const modeloSerArr = Array.isArray(source.modeloAnalitico)
+    ? source.modeloAnalitico
+    : Array.isArray(source.modelo)
+      ? source.modelo
+      : null;
+  if (modeloSerArr) {
+    const rows = deserializeModelo(modeloSerArr);
     migrateMissingTeamIdOnRows(rows);
     const distinctTeams = new Set(rows.map(normalizeRowTeamId));
     if (distinctTeams.size > 1) modeloMergedCache = rows;
@@ -3939,6 +3944,45 @@ function escapeHtml(text) {
     .replaceAll("'", "&#039;");
 }
 
+let campatrackToastHideTimer = null;
+/** Toast breve (import/export); no usa almacenamiento local. */
+function showCampatrackToast(message, variant = "success") {
+  if (typeof document === "undefined" || !message) return;
+  let el = document.getElementById("campatrackToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "campatrackToast";
+    el.className = "campatrack-toast";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+  }
+  el.textContent = String(message);
+  el.classList.remove("campatrack-toast--error", "campatrack-toast--success", "campatrack-toast--visible");
+  el.classList.add(variant === "error" ? "campatrack-toast--error" : "campatrack-toast--success");
+  void el.offsetWidth;
+  el.classList.add("campatrack-toast--visible");
+  if (campatrackToastHideTimer) window.clearTimeout(campatrackToastHideTimer);
+  campatrackToastHideTimer = window.setTimeout(() => {
+    el.classList.remove("campatrack-toast--visible");
+    campatrackToastHideTimer = null;
+  }, 4200);
+}
+
+function showCampatrackLoginLoading() {
+  const el = document.getElementById("campatrackLoginLoadingOverlay");
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.setAttribute("aria-hidden", "false");
+}
+
+function hideCampatrackLoginLoading() {
+  const el = document.getElementById("campatrackLoginLoadingOverlay");
+  if (!el) return;
+  el.classList.add("hidden");
+  el.setAttribute("aria-hidden", "true");
+}
+
 /**
  * Diálogo reutilizable (sin alert ni confirm).
  * Resuelve true si el usuario pulsa el botón primario, false en secundario, overlay o Escape.
@@ -6176,7 +6220,7 @@ async function guardarDataEnAPI(dataCompletaReal) {
       return;
     }
 
-    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/data`, {
+    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/save-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -6195,9 +6239,54 @@ async function guardarDataEnAPI(dataCompletaReal) {
   }
 }
 
+/**
+ * Aplica un bundle JSON solo en memoria (borrador). Requiere «Publicar» para persistir en API.
+ * @param {{ showToast?: boolean }} opts
+ */
+function applyJsonBundleToLocalDraftOnly(bundle, opts = {}) {
+  const showToast = opts.showToast !== false;
+  if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return;
+  hydrateAppStateDraftFromApiBundle(bundle);
+  try {
+    syncRelacionesViewFromDraft();
+    syncDataRelacionesModeloConsistency();
+  } catch (e) {
+    console.warn("applyJsonBundleToLocalDraftOnly modelo/rel", e);
+  }
+  try {
+    hydratarCentrosCostos();
+  } catch (e) {
+    console.warn("hydratarCentrosCostos", e);
+  }
+  if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+  if (typeof rebuildRelacionesTable === "function") rebuildRelacionesTable();
+  if (typeof renderDashboard === "function") renderDashboard();
+  if (typeof actualizarFiltrosCache === "function") actualizarFiltrosCache();
+  if (typeof refreshFechaFiltersUI === "function") refreshFechaFiltersUI();
+  if (typeof renderTablaData === "function") renderTablaData();
+  if (typeof renderTablaAnuncios === "function") renderTablaAnuncios();
+  if (typeof renderTablaCampañas === "function") renderTablaCampañas();
+  if (typeof refreshCentroCostosUI === "function") refreshCentroCostosUI();
+  if (typeof renderCcKpiStrip === "function") renderCcKpiStrip();
+  if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+    try {
+      globalThis.__campatrackRebuildAuditoriaAfterHydrate();
+    } catch (_) {}
+  }
+  registerUnpublishedDraftMutation();
+  if (typeof updatePublishDraftToolbar === "function") updatePublishDraftToolbar();
+  if (showToast) {
+    showCampatrackToast("Datos cargados correctamente. Recuerda publicar para guardar los cambios.", "success");
+  }
+}
+
 function ejecutarGuardadoApiTrasImportacionExitosa(payload) {
-  const dataCompletaReal = obtenerDataCompletaRealParaAPI(payload);
-  guardarDataEnApiCadena = guardarDataEnApiCadena.then(() => guardarDataEnAPI(dataCompletaReal));
+  const bundle = normalizarPayloadABundleImport(payload);
+  if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
+    console.warn("ejecutarGuardadoApiTrasImportacionExitosa: payload inválido");
+    return;
+  }
+  applyJsonBundleToLocalDraftOnly(bundle, { showToast: true });
 }
 
 let guardarApiAutoTimer = null;
@@ -6217,24 +6306,116 @@ function leerJsonLocalStorage(clave, claveLegacy) {
   }
 }
 
-function exportarDatosSistema() {
-  void showAppDialog({
-    message:
-      "La exportación a archivo JSON está deshabilitada. Los datos se guardan en el servidor al pulsar Publicar.",
-    primaryText: "Entendido",
-    showSecondary: false,
-    primaryDanger: false
-  });
+async function exportarDatosSistema() {
+  const exportBtn = document.getElementById("exportDataBtn");
+  const setBusy = (b) => {
+    if (exportBtn instanceof HTMLButtonElement) {
+      exportBtn.disabled = b;
+      exportBtn.setAttribute("aria-busy", b ? "true" : "false");
+    }
+  };
+  try {
+    const user = typeof getUser === "function" ? getUser() : null;
+    const uname = String(user?.username ?? "").trim();
+    if (!uname) {
+      void showAppDialog({
+        message: "Inicia sesión para exportar la data del servidor.",
+        primaryText: "Entendido",
+        showSecondary: false,
+        primaryDanger: false
+      });
+      return;
+    }
+    setBusy(true);
+    const res = await fetch(
+      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(uname)}`
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const blob = new Blob([JSON.stringify(json, null, 2)], {
+      type: "application/json;charset=utf-8"
+    });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safe = String(uname).replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "user";
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = `campatrack_backup_${safe}_${stamp}.json`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showCampatrackToast("Backup descargado.", "success");
+  } catch (err) {
+    console.error("exportarDatosSistema", err);
+    showCampatrackToast(String(err?.message || "Error al exportar."), "error");
+  } finally {
+    setBusy(false);
+  }
 }
 
-function importarDatosSistemaDesdeArchivo(_file) {
-  void showAppDialog({
-    message:
-      "La importación desde archivo está deshabilitada. Usa «Importar desde API» o inicia sesión para cargar la data del servidor.",
-    primaryText: "Entendido",
-    showSecondary: false,
-    primaryDanger: false
-  });
+function importarDatosSistemaDesdeArchivo(file) {
+  if (!(file instanceof File)) return;
+  const importBtn = document.getElementById("importDataBtn");
+  const exportBtn = document.getElementById("exportDataBtn");
+  const setBusy = (b) => {
+    for (const el of [importBtn, exportBtn]) {
+      if (el instanceof HTMLButtonElement) {
+        el.disabled = b;
+        el.setAttribute("aria-busy", b ? "true" : "false");
+      }
+    }
+  };
+  void (async () => {
+    try {
+      const user = typeof getUser === "function" ? getUser() : null;
+      if (!user?.username) {
+        void showAppDialog({
+          message: "Inicia sesión para importar datos.",
+          primaryText: "Entendido",
+          showSecondary: false,
+          primaryDanger: false
+        });
+        return;
+      }
+      const name = String(file.name || "").toLowerCase();
+      if (!name.endsWith(".json")) {
+        showCampatrackToast("El archivo debe ser .json", "error");
+        return;
+      }
+      setBusy(true);
+      const text = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result ?? ""));
+        fr.onerror = () => reject(fr.error || new Error("No se pudo leer el archivo"));
+        fr.readAsText(file, "UTF-8");
+      });
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        console.error("JSON inválido al importar", e);
+        showCampatrackToast("El archivo no es JSON válido.", "error");
+        return;
+      }
+      const bundle =
+        typeof normalizarPayloadABundleImport === "function"
+          ? normalizarPayloadABundleImport(parsed)
+          : null;
+      if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
+        showCampatrackToast("El JSON no tiene el formato de backup esperado.", "error");
+        return;
+      }
+      applyJsonBundleToLocalDraftOnly(bundle, { showToast: true });
+      console.log("Borrador actualizado desde JSON (pendiente de publicar)");
+    } catch (err) {
+      console.error("importarDatosSistemaDesdeArchivo", err);
+      showCampatrackToast(String(err?.message || "Error al importar."), "error");
+    } finally {
+      setBusy(false);
+    }
+  })();
 }
 
 function mostrarModalPostImportacion() {
@@ -6319,6 +6500,12 @@ async function afterLoginSuccess(user) {
       return null;
     }
     hydrateAppStateDraftFromApiBundle(bundle);
+    try {
+      syncRelacionesViewFromDraft();
+      syncDataRelacionesModeloConsistency();
+    } catch (e) {
+      console.warn("Post-hydrate (login): modelo / relaciones", e);
+    }
     return bundle;
   } catch (err) {
     console.error("Error cargando data:", err);
@@ -6334,14 +6521,15 @@ async function cargarDataUsuario(user) {
 /**
  * Cada vez que se muestra el dashboard: GET /api/data con el usuario en sesión (sin depender del flujo de login).
  */
-async function cargarDataDesdeBackend() {
+async function cargarDataDesdeBackend(opts = {}) {
+  const force = opts && opts.force === true;
   try {
     const user = getUser();
     if (!user || !user.username) {
       console.warn("Usuario no definido");
       return;
     }
-    if (appPendingPublishCount > 0) {
+    if (appPendingPublishCount > 0 && !force) {
       if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
       if (typeof renderTablaData === "function") renderTablaData();
       if (typeof setFechaActualData === "function") setFechaActualData();
@@ -6381,6 +6569,12 @@ async function cargarDataDesdeBackend() {
     }
     console.log("Data aplicada al sistema");
     hydrateAppStateDraftFromApiBundle(bundle);
+    try {
+      syncRelacionesViewFromDraft();
+      syncDataRelacionesModeloConsistency();
+    } catch (e) {
+      console.warn("Post-hydrate (backend): modelo / relaciones", e);
+    }
     if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
     if (typeof renderTablaData === "function") renderTablaData();
     if (typeof setFechaActualData === "function") setFechaActualData();
@@ -6545,13 +6739,72 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
   }
 }
 
+let campatrackSidebarFooterDelegationBound = false;
+
+function bindCampatrackSidebarFooterDelegationOnce() {
+  const box = document.getElementById("campatrackSidebarToolBtns");
+  if (!box || campatrackSidebarFooterDelegationBound) return;
+  campatrackSidebarFooterDelegationBound = true;
+  box.addEventListener("click", (e) => {
+    const t = e.target instanceof HTMLElement ? e.target.closest("button") : null;
+    if (!t || !box.contains(t)) return;
+    const id = t.id;
+    if (id === "exportDataBtn") {
+      void exportarDatosSistema();
+      return;
+    }
+    if (id === "importDataBtn") {
+      document.getElementById("importDataFileInput")?.click();
+      return;
+    }
+    if (id === "resetSystemBtn") {
+      void resetearSistemaCompleto();
+    }
+  });
+}
+
+/** Botones de configuración del sidebar según permisos (solo existen en DOM si aplican). */
+function mountCampatrackSidebarFooterTools() {
+  const box = document.getElementById("campatrackSidebarToolBtns");
+  if (!box) return;
+  box.replaceChildren();
+  if (typeof isCampatrackAuthenticated === "function" && !isCampatrackAuthenticated()) return;
+  const u = typeof getUser === "function" ? getUser() : null;
+  const perms = u ? resolveCampatrackSessionPermissions(u) : { canExport: false, canImport: false, canReset: false };
+  if (perms.canExport) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "exportDataBtn";
+    b.className = "tab campatrack-side-tool-btn";
+    b.innerHTML =
+      '<i class="fa-solid fa-file-export campatrack-side-ico" aria-hidden="true"></i><span>Exportar datos</span>';
+    box.appendChild(b);
+  }
+  if (perms.canImport) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "importDataBtn";
+    b.className = "tab campatrack-side-tool-btn";
+    b.innerHTML =
+      '<i class="fa-solid fa-file-import campatrack-side-ico" aria-hidden="true"></i><span>Importar datos</span>';
+    box.appendChild(b);
+  }
+  if (perms.canReset) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "resetSystemBtn";
+    b.className = "tab tab-danger campatrack-side-tool-btn campatrack-side-tool-btn--danger";
+    b.innerHTML =
+      '<i class="fa-solid fa-triangle-exclamation campatrack-side-ico" aria-hidden="true"></i><span>Resetear sistema</span>';
+    box.appendChild(b);
+  }
+}
+
 function initExportImportDatos() {
-  const exportBtn = document.getElementById("exportDataBtn");
-  const importBtn = document.getElementById("importDataBtn");
+  bindCampatrackSidebarFooterDelegationOnce();
+  mountCampatrackSidebarFooterTools();
   const fileInput = document.getElementById("importDataFileInput");
   const importUrlBtn = document.getElementById("btn-importar-url");
-  exportBtn?.addEventListener("click", () => exportarDatosSistema());
-  importBtn?.addEventListener("click", () => fileInput?.click());
   fileInput?.addEventListener("change", (e) => {
     const input = e.target;
     const f = input?.files?.[0];
@@ -13046,8 +13299,11 @@ function campatrackRefreshSessionIfUserRecordMatches(updatedRecord) {
   if (!same) return;
   try {
     const next = buildCampatrackLocalSessionFromRecord(updatedRecord);
-    window.currentUser = next;
-    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(next));
+    window.currentUser = {
+      ...next,
+      permissions: resolveCampatrackSessionPermissions(next)
+    };
+    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
     persistCampatrackSessionToBrowserStorage();
   } catch (_) {
     /* ignore */
@@ -13069,9 +13325,13 @@ function campatrackApplyLoginSuccessToStorage(sessionUser) {
   } catch (_) {}
   campatrackRestoreAuthLocalStorage(snap, { skipPreservedDataKeys: true });
   try {
-    window.currentUser = {
+    const baseUser = {
       ...sessionUser,
       id: sessionUser.id != null ? String(sessionUser.id) : String(sessionUser.username ?? "").trim()
+    };
+    window.currentUser = {
+      ...baseUser,
+      permissions: resolveCampatrackSessionPermissions(baseUser)
     };
     appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
     appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
@@ -13180,8 +13440,9 @@ function persistCampatrackSessionToBrowserStorage() {
       const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
       withId = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
     }
-    window.currentUser = withId;
-    sessionStorage.setItem(CAMPATRACK_BROWSER_USER_KEY, JSON.stringify(withId));
+    const withPerms = { ...withId, permissions: resolveCampatrackSessionPermissions(withId) };
+    window.currentUser = withPerms;
+    sessionStorage.setItem(CAMPATRACK_BROWSER_USER_KEY, JSON.stringify(withPerms));
   } catch (e) {
     console.warn("No se pudo persistir sesión en sessionStorage", e);
   }
@@ -13196,10 +13457,18 @@ function restaurarCampatrackSessionDesdeBrowserStorage() {
     if (u.role === undefined || String(u.role).trim() === "") return;
     const idStr = u.id != null ? String(u.id) : String(u.username).trim();
     if (u.campatrackSystemRoot === true) {
-      window.currentUser = { ...u, id: idStr };
+      window.currentUser = {
+        ...u,
+        id: idStr,
+        permissions: resolveCampatrackSessionPermissions({ ...u, id: idStr })
+      };
     } else {
       const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
-      window.currentUser = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
+      const merged = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
+      window.currentUser = {
+        ...merged,
+        permissions: resolveCampatrackSessionPermissions(merged)
+      };
     }
     appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
     appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
@@ -13219,6 +13488,29 @@ function isAuthenticated() {
   return isCampatrackAuthenticated();
 }
 
+/** Permisos de exportar / importar / reset por rol (base antes de overrides en sesión). */
+function computeCampatrackToolbarPermissionsFromRole(user) {
+  const role = normalizeCampatrackRoleKey(user?.role);
+  const isWiener = String(user?.username || "").trim().toLowerCase() === "wiener";
+  return {
+    canExport: role === "admin" || (role === "usuario" && !isWiener),
+    canImport: role === "admin" || role === "usuario" || (role === "viewer" && isWiener),
+    canReset: role === "admin"
+  };
+}
+
+/** Combina `user.permissions` explícitos con reglas por rol. */
+function resolveCampatrackSessionPermissions(user) {
+  const defaults = computeCampatrackToolbarPermissionsFromRole(user);
+  const p = user?.permissions;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return defaults;
+  return {
+    canExport: typeof p.canExport === "boolean" ? p.canExport : defaults.canExport,
+    canImport: typeof p.canImport === "boolean" ? p.canImport : defaults.canImport,
+    canReset: typeof p.canReset === "boolean" ? p.canReset : defaults.canReset
+  };
+}
+
 function getUser() {
   try {
     if (window.currentUser != null && typeof window.currentUser === "object") {
@@ -13229,14 +13521,14 @@ function getUser() {
         String(w.username || "").trim() !== "" &&
         String(w.role || "").trim() !== ""
       ) {
-        return w;
+        return { ...w, permissions: resolveCampatrackSessionPermissions(w) };
       }
     }
     const raw = appMemorySession.getItem(SS_USER_SESSION_JSON);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
-    return parsed;
+    return { ...parsed, permissions: resolveCampatrackSessionPermissions(parsed) };
   } catch {
     return null;
   }
@@ -14439,44 +14731,49 @@ function initCampatrackLogin() {
     err?.classList.add("hidden");
     if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
     const finishOk = async (loggedInUser) => {
+      showCampatrackLoginLoading();
       try {
-        const rememberCb = document.getElementById("campatrackLoginRemember");
-        const userIn = document.getElementById("campatrackUser");
-        const un = String(userIn?.value || "").trim();
-        if (rememberCb instanceof HTMLInputElement) {
-          if (rememberCb.checked && un) localStorage.setItem(LS_LOGIN_REMEMBER, un);
-          else localStorage.removeItem(LS_LOGIN_REMEMBER);
+        try {
+          const rememberCb = document.getElementById("campatrackLoginRemember");
+          const userIn = document.getElementById("campatrackUser");
+          const un = String(userIn?.value || "").trim();
+          if (rememberCb instanceof HTMLInputElement) {
+            if (rememberCb.checked && un) localStorage.setItem(LS_LOGIN_REMEMBER, un);
+            else localStorage.removeItem(LS_LOGIN_REMEMBER);
+          }
+        } catch (_) {
+          /* ignore */
         }
-      } catch (_) {
-        /* ignore */
+        err?.classList.add("hidden");
+        const uOk =
+          loggedInUser && String(loggedInUser.username || "").trim()
+            ? loggedInUser
+            : typeof getUser === "function"
+              ? getUser()
+              : null;
+        let preloadedBundle = null;
+        try {
+          if (uOk) {
+            preloadedBundle = await afterLoginSuccess(uOk);
+          }
+        } catch (e) {
+          console.error("Error cargando data:", e);
+        }
+        bootstrapCampatrackAuthShell();
+        try {
+          if (appActivateMainModule && isCampatrackAuthenticated()) {
+            appActivateMainModule("dashboard");
+          }
+        } catch (_) {}
+        try {
+          await cargarDataDesdeAPI(true, {
+            fetchedFromLogin: true,
+            preloadedBundle,
+          });
+        } catch (_) {}
+      } finally {
+        hideCampatrackLoginLoading();
       }
-      err?.classList.add("hidden");
-      const uOk =
-        loggedInUser && String(loggedInUser.username || "").trim()
-          ? loggedInUser
-          : typeof getUser === "function"
-            ? getUser()
-            : null;
-      let preloadedBundle = null;
-      try {
-        if (uOk) {
-          preloadedBundle = await afterLoginSuccess(uOk);
-        }
-      } catch (e) {
-        console.error("Error cargando data:", e);
-      }
-      bootstrapCampatrackAuthShell();
-      try {
-        if (appActivateMainModule && isCampatrackAuthenticated()) {
-          appActivateMainModule("dashboard");
-        }
-      } catch (_) {}
-      try {
-        await cargarDataDesdeAPI(true, {
-          fetchedFromLogin: true,
-          preloadedBundle,
-        });
-      } catch (_) {}
     };
     try {
       if (u === SYSTEM_ADMIN.usuario && p === SYSTEM_ADMIN.clave) {
@@ -14502,6 +14799,9 @@ function initCampatrackLogin() {
         apiUser.teamId = resolveCampatrackTeamId(apiUser.teamId);
         if (!String(apiUser.teamId || "").trim()) apiUser.teamId = TEAM_GENERAL_ID;
         apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
+        if (body.user.permissions && typeof body.user.permissions === "object" && !Array.isArray(body.user.permissions)) {
+          apiUser.permissions = body.user.permissions;
+        }
         campatrackApplyLoginSuccessToStorage(apiUser);
         await finishOk(apiUser);
         return;
@@ -14541,7 +14841,6 @@ function initTabs() {
   const tabReporteAnuncios = document.getElementById("tabReporteAnuncios");
   const tabUsuarios = document.getElementById("tabUsuarios");
   const tabAuditoria = document.getElementById("tabAuditoria");
-  const resetSystemBtn = document.getElementById("resetSystemBtn");
   const costCenterModule = document.getElementById("costCenterModule");
   const planningModule = document.getElementById("planningModule");
   const bitacoraModule = document.getElementById("bitacoraModule");
@@ -14590,13 +14889,6 @@ function initTabs() {
     const canAccessAdsReport = visibility.has("ads-report");
     const canAccessUsuarios = roleTabs.has("usuarios");
     const canAccessAuditoria = visibility.has("auditoria");
-    const storedUser = String(appMemoryKV.getItem(LS_CAMPATRACK_USER) || "").trim().toLowerCase();
-    const isWiener = storedUser === "wiener";
-    const canExport = role === "admin" || (role === "usuario" && !isWiener);
-    const canImport = role === "admin" || role === "usuario" || (role === "viewer" && isWiener);
-    const canReset = role === "admin";
-    const exportBtn = document.getElementById("exportDataBtn");
-    const importBtn = document.getElementById("importDataBtn");
     const importUrlBtn = document.getElementById("btn-importar-url");
 
     tabCentroCostos.classList.toggle("hidden", !canAccessCostos);
@@ -14609,20 +14901,11 @@ function initTabs() {
     tabReporteAnuncios.classList.toggle("hidden", !canAccessAdsReport);
     tabUsuarios.classList.toggle("hidden", !canAccessUsuarios);
     tabAuditoria.classList.toggle("hidden", !canAccessAuditoria);
-    if (exportBtn) {
-      exportBtn.classList.toggle("hidden", !canExport);
-      exportBtn.toggleAttribute("disabled", !canExport);
-    }
-    if (importBtn) {
-      importBtn.classList.toggle("hidden", !canImport);
-      importBtn.toggleAttribute("disabled", !canImport);
-    }
+    mountCampatrackSidebarFooterTools();
     if (importUrlBtn) {
-      importUrlBtn.classList.toggle("hidden", !canImport);
-    }
-    if (resetSystemBtn) {
-      resetSystemBtn.classList.toggle("hidden", !canReset);
-      resetSystemBtn.toggleAttribute("disabled", !canReset);
+      const u = typeof getUser === "function" ? getUser() : null;
+      const canImportUrl = u ? resolveCampatrackSessionPermissions(u).canImport : false;
+      importUrlBtn.classList.toggle("hidden", !canImportUrl);
     }
   };
 
@@ -14726,7 +15009,6 @@ function initTabs() {
   tabReporteAnuncios.addEventListener("click", () => setActive("ads-report"));
   tabUsuarios.addEventListener("click", () => setActive("usuarios"));
   tabAuditoria.addEventListener("click", () => setActive("auditoria"));
-  resetSystemBtn?.addEventListener("click", resetearSistemaCompleto);
 
   appActivateMainModule = setActive;
   applyRoleVisibility();
@@ -14737,9 +15019,7 @@ function initTabs() {
   }
 }
 
-const LS_CAMPATRACK_SIDEBAR_COLLAPSED = "campatrack_ui_sidebar_collapsed";
-
-/** Sidebar colapsable (solo UI: clase + preferencia en localStorage). */
+/** Sidebar colapsable: siempre inicia contraído; solo cambia con clic (sin persistencia). */
 function initCampatrackSidebarToggle() {
   const shell = document.getElementById("mainAppShell");
   const btn = document.getElementById("campatrackSidebarToggle");
@@ -14748,17 +15028,8 @@ function initCampatrackSidebarToggle() {
     shell.classList.toggle("campatrack-sidebar-collapsed", collapsed);
     btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
     btn.title = collapsed ? "Expandir menú" : "Colapsar menú";
-    try {
-      appMemoryKV.setItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
-    } catch (_) {
-      /* ignore */
-    }
   };
-  try {
-    if (appMemoryKV.getItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED) === "1") apply(true);
-  } catch (_) {
-    /* ignore */
-  }
+  apply(true);
   btn.addEventListener("click", () => {
     apply(!shell.classList.contains("campatrack-sidebar-collapsed"));
   });
@@ -14980,6 +15251,7 @@ export {
   aplicarFiltros,
   aplicarSugerencia,
   applyDashboardTodosRango,
+  applyJsonBundleToLocalDraftOnly,
   applyFormDateConstraints,
   applyManualRedistribution,
   applyMonthlyInvOverridesToDistribution,
@@ -15365,6 +15637,7 @@ export {
   setPlanningMonthlyLeadFromCell,
   setPresupuestoInputReadonly,
   showAppDialog,
+  showCampatrackToast,
   showCcReassignDialog,
   showDataClearSelectionDialog,
   showDataErrorModal,

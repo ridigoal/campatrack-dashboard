@@ -122,7 +122,17 @@
     </div>
   </div>
 
-  <div id="mainAppShell" class="hidden campatrack-app-shell">
+  <div id="campatrackLoginLoadingOverlay" class="campatrack-login-loading-overlay hidden" aria-hidden="true" role="alertdialog" aria-busy="true" aria-label="Cargando">
+    <div class="campatrack-login-loading-card">
+      <div class="campatrack-login-loading-spinner" aria-hidden="true"></div>
+      <p class="campatrack-login-loading-text">Cargando información…</p>
+      <div class="campatrack-login-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span class="campatrack-login-loading-bar-fill"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="mainAppShell" class="hidden campatrack-app-shell campatrack-sidebar-collapsed">
   <aside class="campatrack-sidebar" aria-label="Navegación principal">
     <div class="campatrack-sidebar-header">
       <button type="button" id="campatrackSidebarToggle" class="campatrack-sidebar-toggle" aria-expanded="true" aria-controls="campatrackSidebarNav" title="Colapsar menú">
@@ -146,9 +156,7 @@
     <div class="campatrack-sidebar-spacer" aria-hidden="true"></div>
     <div class="campatrack-sidebar-footer">
       <p class="campatrack-sidebar-footer-title">Configuración</p>
-      <button id="exportDataBtn" class="tab campatrack-side-tool-btn" type="button"><i class="fa-solid fa-file-export campatrack-side-ico" aria-hidden="true"></i><span>Exportar datos</span></button>
-      <button id="importDataBtn" class="tab campatrack-side-tool-btn" type="button"><i class="fa-solid fa-file-import campatrack-side-ico" aria-hidden="true"></i><span>Importar datos</span></button>
-      <button id="resetSystemBtn" class="tab tab-danger campatrack-side-tool-btn campatrack-side-tool-btn--danger" type="button"><i class="fa-solid fa-triangle-exclamation campatrack-side-ico" aria-hidden="true"></i><span>Resetear sistema</span></button>
+      <div id="campatrackSidebarToolBtns" class="campatrack-sidebar-tool-btns" aria-label="Acciones de configuración"></div>
     </div>
   </aside>
   <div class="campatrack-main-column">

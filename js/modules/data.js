@@ -4,6 +4,7 @@
  */
 export {
   actualizarFiltrosCache,
+  applyJsonBundleToLocalDraftOnly,
   beginEditAnuncioLinkCell,
   cargarDataDesdeAPI,
   cargarDesdeLocalStorage,
