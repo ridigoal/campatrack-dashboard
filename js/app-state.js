@@ -73,7 +73,7 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   appState.dataOriginal = cloneOrig;
   if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
   for (const key of Object.keys(cloneDraft)) {
-    if (key === "planning_data") continue;
+    if (key === "planning_data" || key === "planning") continue;
     appState.dataDraft[key] = cloneDraft[key];
   }
   const slice = normalizePlanningSliceFromBundle(bundle.planning_data);
@@ -81,6 +81,13 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   p.records.length = 0;
   slice.records.forEach((r) => p.records.push(r && typeof r === "object" ? { ...r } : r));
   setPlanningRecordIdSeq(slice.recordIdSeq);
+  try {
+    if (typeof globalThis.__campatrackSyncPlanningAfterHydrate === "function") {
+      globalThis.__campatrackSyncPlanningAfterHydrate();
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 export async function initAppState(options = {}) {
@@ -103,15 +110,19 @@ export async function initAppState(options = {}) {
     ensurePlanningDraftShape();
     return;
   }
-  let bundle;
-  try {
-    bundle = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
-  } catch (e) {
-    throw new Error("Respuesta API: data no es JSON válido");
+  let bundle = row.data;
+  if (typeof bundle === "string") {
+    try {
+      bundle = JSON.parse(bundle);
+    } catch (e) {
+      console.error("Error parseando data:", e);
+      throw new Error("Respuesta API: data no es JSON válido");
+    }
   }
   if (bundle == null || typeof bundle !== "object" || Array.isArray(bundle)) {
     throw new Error("Respuesta API: data no es un objeto");
   }
+  console.log("Bundle final:", bundle);
   hydrateAppStateDraftFromApiBundle(bundle);
 }
 

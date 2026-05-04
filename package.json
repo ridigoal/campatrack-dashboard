@@ -1,0 +1,7 @@
+{
+  "name": "campatrack-dashboard",
+  "private": true,
+  "scripts": {
+    "api": "node server/index.js"
+  }
+}

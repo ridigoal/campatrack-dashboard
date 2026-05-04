@@ -115,9 +115,11 @@ let planningFechaRangoPicker = null;
 let planningFilterFechaIni = "";
 let planningFilterFechaFin = "";
 
-/** Filas Planning = `appState.dataDraft.planning.records` (misma referencia; piloto estado central). */
+/** Filas Planning: leer siempre con `planningDraftRecords()` (= `appState.dataDraft.planning.records`); evita alias obsoleto si el bundle sobrescribe `dataDraft.planning`. */
 ensurePlanningDraftShape();
-var records = appState.dataDraft.planning.records;
+function planningDraftRecords() {
+  return ensurePlanningDraftShape().records;
+}
 let selectedRecordId = null;
 let editingRecordId = null;
 const bitacoraData = [];
@@ -153,7 +155,7 @@ function samePlanningRecordId(a, b) {
 
 /** Asigna id a filas legacy y desduplica ids repetidos para que Editar resuelva siempre la fila correcta. */
 function ensurePlanningRecordsHaveStableUniqueIds() {
-  return ensurePlanningArrayStableUniqueIds(records);
+  return ensurePlanningArrayStableUniqueIds(planningDraftRecords());
 }
 /** Fechas de referencia en edición (tras hidratar) para detectar cambio real de rango sin falsos positivos. */
 let editCampaignBaselineDates = null;
@@ -213,7 +215,7 @@ function planningTipoCharlaOWebinar(tipo) {
  */
 function hasCharlaWebinarMismaConfigSolapeFechas(candidate, excludeId = null) {
   if (!planningTipoCharlaOWebinar(candidate.tipo)) return false;
-  return records.some((r) => {
+  return planningDraftRecords().some((r) => {
     if (excludeId != null && samePlanningRecordId(r.id, excludeId)) return false;
     if (r.tipo !== candidate.tipo) return false;
     if (r.programa !== candidate.programa) return false;
@@ -334,6 +336,18 @@ const TEAM_GENERAL_ID = "team_general";
 
 /** Copia completa en memoria de planning (todos los equipos) para merge al persistir y borradores. */
 let planningMergedRecordsCache = null;
+
+/** Alinea la caché merge con `appState.dataDraft.planning` tras hidratar desde API. */
+function syncPlanningMergedCacheFromAppStateDraft() {
+  const recs = ensurePlanningDraftShape().records;
+  planningMergedRecordsCache = recs.map((r) => (r && typeof r === "object" ? { ...r } : r));
+}
+
+try {
+  globalThis.__campatrackSyncPlanningAfterHydrate = syncPlanningMergedCacheFromAppStateDraft;
+} catch (_) {
+  /* ignore */
+}
 let dataRealMergedCache = null;
 let dataAdsReportMergedCache = null;
 let dataAnunciosMergedCache = null;
@@ -496,17 +510,28 @@ function recomputePlanningMergedCacheFromRecords() {
     shouldDeferDiskPersistence() && Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
       ? planningMergedRecordsCache.slice()
       : readParsedPlanningPayloadFromDisk().rows;
-  planningMergedRecordsCache = mergeRowsByTeamId(base, records, tid, normalizeRowTeamId);
+  planningMergedRecordsCache = mergeRowsByTeamId(
+    base,
+    ensurePlanningDraftShape().records,
+    tid,
+    normalizeRowTeamId
+  );
 }
 
 function reloadPlanningWorkingSliceFromCache() {
-  const tid = getCurrentTeamId();
-  const src = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache : [];
-  records.length = 0;
+  const draft = ensurePlanningDraftShape();
+  let src = Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
+    ? planningMergedRecordsCache.slice()
+    : [];
+  if (!src.length && Array.isArray(draft.records) && draft.records.length) {
+    syncPlanningMergedCacheFromAppStateDraft();
+    src = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache.slice() : [];
+  }
+  draft.records.length = 0;
   src.forEach((r) => {
-    if (rowBelongsToCurrentTeam(r)) records.push(r);
+    if (rowBelongsToCurrentTeam(r)) draft.records.push(r && typeof r === "object" ? { ...r } : r);
   });
-  const maxId = records.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
+  const maxId = draft.records.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
   if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
     setPlanningRecordIdSeq(Math.max(1, Math.round(Number(getPlanningRecordIdSeq())), maxId + 1));
   } else if (maxId) {
@@ -537,8 +562,10 @@ function readFullConsumoFromDisk() {
 
 function getPlanningRowByIdFromMergedCache(id) {
   const key = String(id);
-  const src = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache : [];
-  return src.find((r) => r && samePlanningRecordId(r.id, key)) || null;
+  const merged = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache : [];
+  const fromMerged = merged.find((r) => r && samePlanningRecordId(r.id, key));
+  if (fromMerged) return fromMerged;
+  return ensurePlanningDraftShape().records.find((r) => r && samePlanningRecordId(r.id, key)) || null;
 }
 
 function mergeConsumoForPersist() {
@@ -651,13 +678,13 @@ function recordUsesCentroCostoRow(record, cc) {
 }
 
 function getRecordsLinkedToCentroCostoRow(cc) {
-  return records.filter((r) => recordUsesCentroCostoRow(r, cc));
+  return planningDraftRecords().filter((r) => recordUsesCentroCostoRow(r, cc));
 }
 
 function getUsedInversionCentro(centroId, excludeRecordId = null) {
   const selectedKey = normalizeCentroCostoSelectionValue(centroId);
   if (!selectedKey) return 0;
-  return records.reduce((sum, r) => {
+  return planningDraftRecords().reduce((sum, r) => {
     if (excludeRecordId != null && samePlanningRecordId(r.id, excludeRecordId)) return sum;
     const recordKey = normalizeCentroCostoSelectionValue(r.centroCostoId || "");
     if (recordKey !== selectedKey) return sum;
@@ -699,7 +726,7 @@ function syncConsumoFromRecords() {
   Object.keys(consumoPorCampaña).forEach((k) => {
     delete consumoPorCampaña[k];
   });
-  records.forEach((rec) => {
+  planningDraftRecords().forEach((rec) => {
     const ccKey = normalizeCentroCostoSelectionValue(rec.centroCostoId || "");
     if (!ccKey) return;
     const s = parseDateInput(rec.fechaInicio);
@@ -745,7 +772,7 @@ function aggregatePlanningMonthlyByDimension(dateFilter) {
     row[monthIdx] += val;
   };
 
-  records.forEach((rec) => {
+  planningDraftRecords().forEach((rec) => {
     const s = parseDateInput(rec.fechaInicio);
     const e = parseDateInput(rec.fechaFin);
     if (!s || !e) return;
@@ -1444,7 +1471,7 @@ function runWithDiskPersistenceEnabled(fn) {
 function buildMemorySnapshotForPublish() {
   recomputePlanningMergedCacheFromRecords();
   refreshTeamScopedDataCachesForSnapshot();
-  const planningSnap = JSON.parse(JSON.stringify(planningMergedRecordsCache && planningMergedRecordsCache.length ? planningMergedRecordsCache : records));
+  const planningSnap = JSON.parse(JSON.stringify(planningMergedRecordsCache && planningMergedRecordsCache.length ? planningMergedRecordsCache : planningDraftRecords()));
   return {
     planning_data: { records: planningSnap, recordIdSeq: getPlanningRecordIdSeq() },
     cc_data: { centros: JSON.parse(JSON.stringify(centrosCostos)), seq: centroCostoIdSeq },
@@ -1637,7 +1664,7 @@ function flushAllPersistedStateToDisk() {
   runWithDiskPersistenceEnabled(() => {
     try {
       recomputePlanningMergedCacheFromRecords();
-      const mergedPlan = planningMergedRecordsCache || records.slice();
+      const mergedPlan = planningMergedRecordsCache || planningDraftRecords().slice();
       writePlanningPayloadToLocalStorage(mergedPlan, getPlanningRecordIdSeq());
     } catch (err) {
       console.warn("flush planning", err);
@@ -1893,7 +1920,7 @@ function initDraftPublishToolbar() {
 
 function persistPlanningData() {
   recomputePlanningMergedCacheFromRecords();
-  const merged = planningMergedRecordsCache || records.slice();
+  const merged = planningMergedRecordsCache || planningDraftRecords().slice();
   const maxMergedId = merged.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
   if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
     setPlanningRecordIdSeq(Math.max(Math.max(1, Math.round(Number(getPlanningRecordIdSeq()))), maxMergedId + 1));
@@ -2008,7 +2035,7 @@ function mergeFuentesEnCatalogosSistema() {
     agregarValorSiNoExiste(catalogosSistema.tipos, p.tipo);
     agregarValorSiNoExiste(catalogosSistema.programas, p.nombre);
   });
-  records.forEach((r) => {
+  planningDraftRecords().forEach((r) => {
     agregarValorSiNoExiste(catalogosSistema.tipos, r.tipo);
     agregarValorSiNoExiste(catalogosSistema.programas, r.programa);
     agregarValorSiNoExiste(catalogosSistema.tracking, r.tracking);
@@ -2051,7 +2078,7 @@ function collectProgramNamesForPlanningTipo(tipo) {
     const n = String(p?.nombre || "").trim();
     if (n) names.add(n);
   });
-  records.forEach((r) => {
+  ensurePlanningDraftShape().records.forEach((r) => {
     if (String(r.tipo || "").trim() !== t) return;
     const n = String(r.programa || "").trim();
     if (n) names.add(n);
@@ -2065,7 +2092,7 @@ function collectProgramNamesForPlanningTipo(tipo) {
     const n = String(raw || "").trim();
     if (!n) return;
     if (programs.some((p) => String(p.tipo) === t && String(p.nombre) === n)) names.add(n);
-    if (records.some((r) => String(r.tipo || "").trim() === t && String(r.programa || "").trim() === n)) names.add(n);
+    if (planningDraftRecords().some((r) => String(r.tipo || "").trim() === t && String(r.programa || "").trim() === n)) names.add(n);
     if (bitacoraData.some((b) => String(b.tipo || "").trim() === t && String(b.programa || "").trim() === n)) names.add(n);
   });
   return Array.from(names).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
@@ -2171,7 +2198,7 @@ function dateRangesOverlap(fi1, ff1, fi2, ff2) {
 
 function hasIntakeDateOverlap(candidate, excludeId = null) {
   if (planningTipoSinRestriccionCruceFechas(candidate.tipo)) return false;
-  return records.some((r) => {
+  return planningDraftRecords().some((r) => {
     if (excludeId != null && samePlanningRecordId(r.id, excludeId)) return false;
     if (planningTipoSinRestriccionCruceFechas(r.tipo)) return false;
     if (
@@ -2196,7 +2223,7 @@ function computeMinFechaInicioForForm(excludeId = null) {
   if (!tipo || !programa || !tracking || !plataforma) return null;
   if (planningTipoSinRestriccionCruceFechas(tipo)) return null;
   let maxEnd = null;
-  for (const r of records) {
+  for (const r of planningDraftRecords()) {
     if (excludeId != null && samePlanningRecordId(r.id, excludeId)) continue;
     if (r.tipo !== tipo || r.programa !== programa || r.tracking !== tracking || r.plataforma !== plataforma) continue;
     const e = parseDateInput(r.fechaFin);
@@ -2822,7 +2849,7 @@ function getFilteredRecords() {
   const estadoFiltro = estEl instanceof HTMLSelectElement ? String(estEl.value || "").trim() : "";
   const qEl = document.getElementById("planningToolbarSearch");
   const q = qEl instanceof HTMLInputElement ? String(qEl.value || "").trim().toLowerCase() : "";
-  const filtered = records.filter((r) => {
+  const filtered = ensurePlanningDraftShape().records.filter((r) => {
     if (tipo && r.tipo !== tipo) return false;
     if (intake && r.intake !== intake) return false;
     if (programaQ && !String(r.programa || "").toLowerCase().includes(programaQ)) return false;
@@ -2933,6 +2960,7 @@ function updateActionButtons() {
 
 function rebuildPlanningTable() {
   if (!planningBody) return;
+  console.log("Estado actual planning:", appState.dataDraft.planning.records);
   planningBody.innerHTML = "";
   updateFilterProgramaState();
   syncSelectionToFilter();
@@ -3037,7 +3065,7 @@ function showFormError(msg) {
 }
 
 function isDuplicateRecord(candidate, excludeId = null) {
-  return records.some(
+  return planningDraftRecords().some(
     (r) =>
       (excludeId == null || !samePlanningRecordId(r.id, excludeId)) &&
       r.tipo === candidate.tipo &&
@@ -3612,16 +3640,19 @@ document.getElementById("planningExportTableBtn")?.addEventListener("click", () 
 
 editRecordBtn?.addEventListener("click", () => {
   if (!selectedRecordId) return;
-  const rec = records.find((r) => samePlanningRecordId(r.id, selectedRecordId));
+  const pr = planningDraftRecords();
+  const rec = pr.find((r) => samePlanningRecordId(r.id, selectedRecordId));
   if (rec) openModalForEdit(rec);
 });
 
 deleteRecordBtn?.addEventListener("click", () => {
   if (!selectedRecordId) return;
-  const idx = records.findIndex((r) => samePlanningRecordId(r.id, selectedRecordId));
+  const pr = planningDraftRecords();
+  const idx = pr.findIndex((r) => samePlanningRecordId(r.id, selectedRecordId));
   if (idx < 0) return;
-  records.splice(idx, 1);
+  pr.splice(idx, 1);
   selectedRecordId = null;
+  console.log("Estado actual planning:", appState.dataDraft.planning.records);
   rebuildPlanningTable();
   persistPlanningData();
 });
@@ -4071,11 +4102,12 @@ campaignForm?.addEventListener("submit", (event) => {
     const distSnap = snapshotDistribucionMensualFromPreview();
 
     if (editingRecordId != null) {
-      const idx = records.findIndex((r) => samePlanningRecordId(r.id, editingRecordId));
+      const pr = planningDraftRecords();
+      const idx = pr.findIndex((r) => samePlanningRecordId(r.id, editingRecordId));
       if (idx < 0) return;
-      const prev = records[idx];
+      const prev = pr[idx];
       const prevMetas = prev.metas;
-      records[idx] = {
+      pr[idx] = {
         ...prev,
         teamId: getCurrentTeamId(),
         tipo: candidate.tipo,
@@ -4098,6 +4130,7 @@ campaignForm?.addEventListener("submit", (event) => {
         distribucionMensual: distSnap,
         monthlyInvOverride: distSnap ? undefined : ovSnap
       };
+      console.log("Estado actual planning:", appState.dataDraft.planning.records);
     } else {
       const newRecord = {
         id: newPlanningRecordId(),
@@ -4122,7 +4155,8 @@ campaignForm?.addEventListener("submit", (event) => {
         distribucionMensual: distSnap,
         monthlyInvOverride: distSnap ? undefined : ovSnap
       };
-      records.push(newRecord);
+      planningDraftRecords().push(newRecord);
+      console.log("Estado actual planning:", appState.dataDraft.planning.records);
     }
 
     rebuildPlanningTable();
@@ -4362,7 +4396,8 @@ planningBody?.addEventListener("dblclick", (event) => {
 
   const recordIdRaw = td.getAttribute("data-record-id");
   if (recordIdRaw == null || recordIdRaw === "") return;
-  const record = records.find((r) => samePlanningRecordId(r.id, recordIdRaw));
+  const pr = planningDraftRecords();
+  const record = pr.find((r) => samePlanningRecordId(r.id, recordIdRaw));
   if (!record) return;
 
   const bindNumericCommit = (input, apply, opts = {}) => {
@@ -4561,7 +4596,7 @@ planningBody?.addEventListener("dblclick", (event) => {
 
 hydratarProgramas();
 const planningIdsRepaired = hydratarPlanningData();
-records.forEach((r) => {
+planningDraftRecords().forEach((r) => {
   if (r.centroCostoId === undefined || r.centroCostoId === null) r.centroCostoId = "";
   r.centroCostoId = normalizeCentroCostoSelectionValue(r.centroCostoId);
 });
@@ -4657,7 +4692,7 @@ function getBitacoraProgramOptions() {
     const value = String(p?.nombre || "").trim();
     if (value) unique.add(value);
   });
-  records.forEach((r) => {
+  planningDraftRecords().forEach((r) => {
     const value = String(r?.programa || "").trim();
     if (value) unique.add(value);
   });
@@ -5138,7 +5173,7 @@ function getPlanningKeysForCplHistoricoForm() {
   const plataforma = (plataformaSelect?.value || "").trim();
   const keys = new Set();
   if (!tipo || !programa || !tracking || !plataforma) return keys;
-  for (const r of records) {
+  for (const r of planningDraftRecords()) {
     if (String(r.tipo || "").trim() !== tipo) continue;
     if (String(r.programa || "").trim() !== programa) continue;
     if (String(r.tracking || "").trim() !== tracking) continue;
@@ -5665,7 +5700,7 @@ async function persistPublishedBundleToBackend() {
   try {
     if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) return;
     recomputePlanningMergedCacheFromRecords();
-    const mergedPlan = planningMergedRecordsCache || records.slice();
+    const mergedPlan = planningMergedRecordsCache || planningDraftRecords().slice();
     const base = obtenerDataCompletaRealParaAPI();
     const data = {
       ...base,
@@ -5700,7 +5735,7 @@ async function guardarDataEnAPI(dataCompletaReal) {
       return;
     }
 
-    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/save-all`, {
+    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/data`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -5798,19 +5833,112 @@ function mostrarModalPostImportacion() {
 }
 
 /**
+ * Convierte `json.data` (objeto o string JSON) en objeto bundle antes de hidratar.
+ */
+function parseBundleDataFromApiJson(json) {
+  if (!json || json.data == null || json.data === "") return null;
+  let bundle = json.data;
+  if (typeof bundle === "string") {
+    try {
+      bundle = JSON.parse(bundle);
+    } catch (e) {
+      console.error("Error parseando data:", e);
+      return null;
+    }
+  }
+  if (bundle == null || typeof bundle !== "object" || Array.isArray(bundle)) return null;
+  console.log("Bundle final:", bundle);
+  return bundle;
+}
+
+/**
+ * Tras login exitoso: siempre consulta el backend (GET /api/data) con el usuario recibido.
+ * No depende de getUser ni de localStorage; debe llamarse con el mismo objeto persistido en sesión.
+ */
+async function afterLoginSuccess(user) {
+  try {
+    const uname = String(user?.username ?? "").trim();
+    if (!uname) {
+      console.warn("afterLoginSuccess: sin username");
+      return null;
+    }
+    console.log("Cargando data desde backend...");
+    const res = await fetch(
+      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(uname)}`
+    );
+    if (!res.ok) {
+      console.error("Error cargando data:", `HTTP ${res.status}`);
+      return null;
+    }
+    const json = await res.json();
+    console.log("Respuesta backend:", json);
+    const bundle = parseBundleDataFromApiJson(json);
+    if (!bundle) {
+      console.log("No hay data para este usuario");
+      return null;
+    }
+    hydrateAppStateDraftFromApiBundle(bundle);
+    return bundle;
+  } catch (err) {
+    console.error("Error cargando data:", err);
+    return null;
+  }
+}
+
+/** Alias: misma carga que `afterLoginSuccess` (p. ej. importar desde URL). */
+async function cargarDataUsuario(user) {
+  return afterLoginSuccess(user);
+}
+
+/**
+ * Cada vez que se muestra el dashboard: GET /api/data con el usuario en sesión (sin depender del flujo de login).
+ */
+async function cargarDataDesdeBackend() {
+  try {
+    const user = getUser();
+    if (!user || !user.username) {
+      console.warn("Usuario no definido");
+      return;
+    }
+    console.log("🔥 Cargando data desde backend...");
+    const res = await fetch(
+      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(String(user.username))}`
+    );
+    if (!res.ok) {
+      console.error("Error cargando data:", `HTTP ${res.status}`);
+      return;
+    }
+    const json = await res.json();
+    console.log("Respuesta backend:", json);
+    const bundle = parseBundleDataFromApiJson(json);
+    if (!bundle) {
+      console.log("No hay data para este usuario");
+      return;
+    }
+    console.log("Data aplicada al sistema");
+    hydrateAppStateDraftFromApiBundle(bundle);
+    if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+    if (typeof renderDashboard === "function") renderDashboard();
+  } catch (err) {
+    console.error("Error cargando data:", err);
+  }
+}
+
+/**
  * Obtiene `/api/data` del usuario logueado.
  * - `false` (defecto): devuelve JSON stringido para armar File (botón importar URL).
  * - `true`: aplica las mismas claves que la importación manual (`EXPORT_BUNDLE_KEYS`),
  *   ejecuta POST de sincronización y recarga para hidratar (post-login).
  */
-async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
+async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
   const recargarSiPostLogin = () => {
     if (aplicarYLuegoRecargar) window.location.reload();
   };
 
   const bundleTieneDatosUtiles = (bundle) => {
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return false;
-    for (const clave of EXPORT_BUNDLE_KEYS) {
+    const claves = EXPORT_BUNDLE_KEYS.concat(CLAVES_EXTRA_ESTADO_SISTEMA);
+    for (const clave of claves) {
       if (!Object.prototype.hasOwnProperty.call(bundle, clave)) continue;
       const v = bundle[clave];
       if (v == null) continue;
@@ -5848,19 +5976,10 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
       return "";
     }
 
-    const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(String(user.username))}`
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const dataReal =
+      opts.fetchedFromLogin === true ? opts.preloadedBundle : await cargarDataUsuario(user);
 
-    let response;
-    try {
-      response = await res.json();
-    } catch (_e) {
-      throw new Error("Respuesta API no JSON");
-    }
-
-    if (!response || typeof response !== "object" || response.data == null) {
+    if (dataReal == null) {
       console.log("Sin data para este usuario");
       if (aplicarYLuegoRecargar) {
         persistCampatrackSessionToBrowserStorage();
@@ -5877,24 +5996,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
       return "";
     }
 
-    let dataReal;
-    try {
-      dataReal = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
-    } catch (_e) {
-      console.error("Error parseando data de API");
-      throw _e;
-    }
-    if (dataReal === null || typeof dataReal !== "object" || Array.isArray(dataReal)) {
-      throw new Error("El campo data no es un objeto JSON válido");
-    }
-
     console.log("DATA API:", dataReal);
-
-    try {
-      await initAppState({ userId: String(user.username), prefetchedBundle: dataReal });
-    } catch (e) {
-      console.warn("initAppState(prefetchedBundle)", e);
-    }
 
     if (!bundleTieneDatosUtiles(dataReal)) {
       console.log("Sin datos de bundle para aplicar para este usuario");
@@ -6348,7 +6450,7 @@ function guardarTodo(opts = {}) {
   const incluirTablasData = opts.incluirTablasData !== false;
   try {
     recomputePlanningMergedCacheFromRecords();
-    const mergedPlan = planningMergedRecordsCache || records.slice();
+    const mergedPlan = planningMergedRecordsCache || planningDraftRecords().slice();
     appMemoryKV.setItem("planning", JSON.stringify(mergedPlan));
     appMemoryKV.setItem(LS_PLANNING_DATA, JSON.stringify({ records: mergedPlan, recordIdSeq: getPlanningRecordIdSeq() }));
     if (incluirTablasData) {
@@ -6375,7 +6477,7 @@ function hasAnyDataLoaded() {
 }
 
 function pruneRelacionesWithoutData() {
-  const planningKeys = new Set(records.map((r) => planningKeyFromRecord(r)));
+  const planningKeys = new Set(planningDraftRecords().map((r) => planningKeyFromRecord(r)));
   const latestNameById = getLatestCampaignNameMap(getAllCampaignRows());
   const campaignIds = new Set(Array.from(latestNameById.keys()));
   const seen = new Set();
@@ -7930,13 +8032,13 @@ function resolveProgramaForAnuncio(r) {
   if (id && Array.isArray(relaciones) && relaciones.length) {
     const hit = relaciones.find((x) => String(x.idCampania || "").trim() === id);
     if (hit) {
-      const rec = records.find((x) => planningKeyFromRecord(x) === hit.planningKey);
+      const rec = planningDraftRecords().find((x) => planningKeyFromRecord(x) === hit.planningKey);
       const p = String(rec?.programa || "").trim();
       if (p) return p;
     }
   }
   const nombreCampana = String(r?.nombreCampana || "");
-  for (const rec of records) {
+  for (const rec of planningDraftRecords()) {
     if (
       dataRowMatchesPlanningContext({ nombre: nombreCampana }, rec.programa, rec.tracking, rec.plataforma)
     ) {
@@ -8034,7 +8136,7 @@ function refreshAdsReportFilterOptions() {
   const selPrograma = document.getElementById("adsReportFilterPrograma");
   if (!selPrograma) return;
   const progCurrent = selPrograma.value;
-  const programas = Array.from(new Set(records.map((r) => String(r.programa || "").trim()).filter(Boolean))).sort((a, b) =>
+  const programas = Array.from(new Set(planningDraftRecords().map((r) => String(r.programa || "").trim()).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b, "es", { sensitivity: "base" })
   );
   selPrograma.innerHTML = `<option value="">Todos</option>${programas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}`;
@@ -8219,7 +8321,7 @@ function normalizeRelacionesPlanningKeys() {
       return;
     }
 
-    const matches = records.filter((r) =>
+    const matches = planningDraftRecords().filter((r) =>
       String(r.tipo) === parsed.tipo &&
       String(r.programa) === parsed.programa &&
       String(r.plataforma) === parsed.plataforma &&
@@ -8265,7 +8367,7 @@ function calcularScore(planning, data) {
 
 function getPlanningGroups() {
   const map = new Map();
-  records.forEach((r) => {
+  planningDraftRecords().forEach((r) => {
     const key = planningKeyFromRecord(r);
     if (!map.has(key)) map.set(key, r);
   });
@@ -8347,7 +8449,7 @@ function refreshRelacionesFilterSelects() {
   if (!selPlat || !selTipo) return;
   const plats = new Set();
   const tipos = new Set();
-  records.forEach((r) => {
+  planningDraftRecords().forEach((r) => {
     const p = String(r.plataforma || "").trim();
     const t = String(r.tipo || "").trim();
     if (p) plats.add(p);
@@ -8606,7 +8708,7 @@ function generarModeloAnalitico() {
     dataByCampaignId.get(id).push(d);
   });
 
-  records.forEach((planning) => {
+  planningDraftRecords().forEach((planning) => {
     const planningKey = planningKeyFromRecord(planning);
     const planningStart = parseDateInput(planning.fechaInicio);
     const planningEnd = parseDateInput(planning.fechaFin);
@@ -8921,7 +9023,7 @@ function buildDataAgrupadaConTiempo(rows, mesFiltro) {
 
   planningKeys.forEach((key) => {
     const [tipo, programa, intake, plataforma, tracking] = key.split("||");
-    const rec = records.find((r) =>
+    const rec = planningDraftRecords().find((r) =>
       String(r.tipo) === tipo &&
       String(r.programa) === programa &&
       String(r.intake) === intake &&
@@ -9674,7 +9776,7 @@ function ensureDashboardInitialMonth() {
 }
 
 function getPlanningByPrograma(programa) {
-  return records.filter((r) => String(r.programa) === String(programa));
+  return planningDraftRecords().filter((r) => String(r.programa) === String(programa));
 }
 
 function toShortIntakeLabel(v) {
@@ -9686,7 +9788,7 @@ function toShortIntakeLabel(v) {
 
 function getPlanningUniqueIntakes() {
   const vals = Array.from(
-    new Set(records.map((r) => String(r.intake ?? "").trim()).filter(Boolean))
+    new Set(planningDraftRecords().map((r) => String(r.intake ?? "").trim()).filter(Boolean))
   );
   return vals.sort((a, b) => {
     const na = Number((a.match(/(\d+)/) || [])[1]);
@@ -9761,7 +9863,7 @@ function formatearPlataforma(plataforma) {
 }
 
 function getPlanningByProgIntakeTrackPlat(programa, intake, tracking, plataforma, tipo = "") {
-  return records.filter(
+  return planningDraftRecords().filter(
     (r) =>
       (!tipo || String(r.tipo) === String(tipo)) &&
       String(r.programa) === String(programa) &&
@@ -10857,7 +10959,7 @@ function computeDashGastoDiffExcludedRows() {
     let hit = false;
     const reasonsAcc = [];
     for (const rel of rels) {
-      const planning = records.find((rec) => planningKeyFromRecord(rec) === rel.planningKey);
+      const planning = planningDraftRecords().find((rec) => planningKeyFromRecord(rec) === rel.planningKey);
       if (!planning) {
         reasonsAcc.push("No relacionado en módulo RELACIONES");
         continue;
@@ -10916,7 +11018,7 @@ function collectDashboardCampaignsEndingSoon() {
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const limit = new Date(start);
   limit.setDate(limit.getDate() + 5);
-  return records
+  return planningDraftRecords()
     .filter((rec) => !esTipoBrandingConvocatoriaDashboard(rec.tipo))
     .map((rec) => {
       const endDate = parseDateInput(rec.fechaFin);
@@ -11785,13 +11887,13 @@ function getDashboardLinkedCampaignDateWindows() {
   );
   if (!planningKeys.size) {
     planningKeys = new Set(
-      records
+      planningDraftRecords()
         .filter((rec) => dashboardPlanningRecordMatchesSegments(rec))
         .filter((rec) => !estadoFiltrosDashboard.mes || dashboardPlanningRecordContainsMonth(rec, estadoFiltrosDashboard.mes))
         .map((rec) => planningKeyFromRecord(rec))
     );
   }
-  const planningByKey = new Map(records.map((r) => [planningKeyFromRecord(r), r]));
+  const planningByKey = new Map(planningDraftRecords().map((r) => [planningKeyFromRecord(r), r]));
   const campaignWindows = new Map();
   const appendWindows = (k, windows) => {
     if (!k) return;
@@ -12350,7 +12452,7 @@ function campatrackSnapshotAuthLocalStorage() {
   return { users, theme, preserved };
 }
 
-function campatrackRestoreAuthLocalStorage(snap) {
+function campatrackRestoreAuthLocalStorage(snap, opts = {}) {
   if (!snap) return;
   try {
     if (snap.users != null) appMemoryKV.setItem(LS_CAMPATRACK_USERS, snap.users);
@@ -12358,7 +12460,11 @@ function campatrackRestoreAuthLocalStorage(snap) {
   try {
     if (snap.theme != null) appMemoryKV.setItem(LS_CAMPATRACK_THEME, snap.theme);
   } catch (_) {}
-  if (snap.preserved && typeof snap.preserved === "object") {
+  if (
+    !opts.skipPreservedDataKeys &&
+    snap.preserved &&
+    typeof snap.preserved === "object"
+  ) {
     for (const [k, v] of Object.entries(snap.preserved)) {
       if (v == null) continue;
       try {
@@ -12479,7 +12585,7 @@ function campatrackApplyLoginSuccessToStorage(sessionUser) {
   try {
     appMemoryKV.clear();
   } catch (_) {}
-  campatrackRestoreAuthLocalStorage(snap);
+  campatrackRestoreAuthLocalStorage(snap, { skipPreservedDataKeys: true });
   try {
     window.currentUser = {
       ...sessionUser,
@@ -13616,8 +13722,22 @@ function initCampatrackLogin() {
     const submitBtn = form?.querySelector('button[type="submit"]');
     err?.classList.add("hidden");
     if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
-    const finishOk = async () => {
+    const finishOk = async (loggedInUser) => {
       err?.classList.add("hidden");
+      const uOk =
+        loggedInUser && String(loggedInUser.username || "").trim()
+          ? loggedInUser
+          : typeof getUser === "function"
+            ? getUser()
+            : null;
+      let preloadedBundle = null;
+      try {
+        if (uOk) {
+          preloadedBundle = await afterLoginSuccess(uOk);
+        }
+      } catch (e) {
+        console.error("Error cargando data:", e);
+      }
       bootstrapCampatrackAuthShell();
       try {
         if (appActivateMainModule && isCampatrackAuthenticated()) {
@@ -13625,13 +13745,17 @@ function initCampatrackLogin() {
         }
       } catch (_) {}
       try {
-        await cargarDataDesdeAPI(true);
+        await cargarDataDesdeAPI(true, {
+          fetchedFromLogin: true,
+          preloadedBundle,
+        });
       } catch (_) {}
     };
     try {
       if (u === SYSTEM_ADMIN.usuario && p === SYSTEM_ADMIN.clave) {
-        campatrackApplyLoginSuccessToStorage(buildCampatrackSystemAdminSession());
-        await finishOk();
+        const sessionUser = buildCampatrackSystemAdminSession();
+        campatrackApplyLoginSuccessToStorage(sessionUser);
+        await finishOk(sessionUser);
         return;
       }
       const res = await fetch(API_LOGIN_URL, {
@@ -13651,13 +13775,14 @@ function initCampatrackLogin() {
         if (!String(apiUser.teamId || "").trim()) apiUser.teamId = TEAM_GENERAL_ID;
         apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
         campatrackApplyLoginSuccessToStorage(apiUser);
-        await finishOk();
+        await finishOk(apiUser);
         return;
       }
       const local = await tryLocalCampatrackLogin(u, p);
       if (local.ok && local.record) {
-        campatrackApplyLoginSuccessToStorage(buildCampatrackLocalSessionFromRecord(local.record));
-        await finishOk();
+        const sessionUser = buildCampatrackLocalSessionFromRecord(local.record);
+        campatrackApplyLoginSuccessToStorage(sessionUser);
+        await finishOk(sessionUser);
         return;
       }
       err?.classList.remove("hidden");
@@ -13665,8 +13790,9 @@ function initCampatrackLogin() {
       console.warn("Login API", fetchErr);
       const local = await tryLocalCampatrackLogin(u, p);
       if (local.ok && local.record) {
-        campatrackApplyLoginSuccessToStorage(buildCampatrackLocalSessionFromRecord(local.record));
-        await finishOk();
+        const sessionUser = buildCampatrackLocalSessionFromRecord(local.record);
+        campatrackApplyLoginSuccessToStorage(sessionUser);
+        await finishOk(sessionUser);
         return;
       }
       err?.classList.remove("hidden");
@@ -13823,6 +13949,7 @@ function initTabs() {
     if (safeModule === "dashboard") {
       renderDashboard();
       scheduleDashEndingSoonAlert();
+      void cargarDataDesdeBackend();
     } else if (dashEndingSoonAlertTimer != null) {
       clearTimeout(dashEndingSoonAlertTimer);
       dashEndingSoonAlertTimer = null;
@@ -14118,6 +14245,7 @@ export {
   applyPlanningLeadsTotalFromCell,
   applyPlanningPresupuestoTotalFromCell,
   autoPercentagesByDays,
+  afterLoginSuccess,
   beginEditAnuncioLinkCell,
   bitacoraRowPasaFiltros,
   bootstrapCampatrackAuthShell,
@@ -14128,6 +14256,8 @@ export {
   campatrackPerformLogoutToIndex,
   cancelAdsPreviewHoverTimer,
   cargarDataDesdeAPI,
+  cargarDataDesdeBackend,
+  cargarDataUsuario,
   cargarDesdeLocalStorage,
   clipRangeToYear,
   closeAdsThumbModal,
