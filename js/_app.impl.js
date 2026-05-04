@@ -2,6 +2,7 @@ import {
   appState,
   ensurePlanningDraftShape,
   ensureDataGeneralDraftShape,
+  ensureRelacionesDraftShape,
   getPlanningRecordIdSeq,
   setPlanningRecordIdSeq,
   bumpAppStatePendingChanges,
@@ -351,7 +352,6 @@ try {
 }
 let dataAdsReportMergedCache = null;
 let dataAnunciosMergedCache = null;
-let relacionesMergedCache = null;
 let modeloMergedCache = null;
 let medidasMergedCache = null;
 let campaniasUnicasMergedCache = null;
@@ -401,6 +401,23 @@ function resolveCampatrackTeamNombre(teamId) {
 }
 
 /**
+ * Normaliza id de equipo: acepta el `id` canónico (p. ej. team_general), el nombre en UI ("General") o alias.
+ * Evita que el filtro por equipo compare "General" con filas guardadas como `team_general`.
+ */
+function resolveCampatrackTeamId(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return TEAM_GENERAL_ID;
+  ensureCampatrackTeamsSeed();
+  const list = getCampatrackStoredTeams();
+  if (list.some((t) => String(t?.id) === s)) return s;
+  const byNombre = list.find((t) => String(t?.nombre || "").trim().toLowerCase() === s.toLowerCase());
+  if (byNombre) return String(byNombre.id);
+  const sl = s.toLowerCase().replace(/\s+/g, "_");
+  if (sl === "general") return TEAM_GENERAL_ID;
+  return s;
+}
+
+/**
  * Equipo activo = sesión (`user.teamId`) o equipo general (legacy / sin sesión).
  * `getUser` está declarado más abajo; las funciones declaradas quedan disponibles en todo el módulo.
  */
@@ -409,7 +426,7 @@ function getCurrentTeamId() {
     const u = getUser();
     if (u && u.campatrackSystemRoot === true) return TEAM_GENERAL_ID;
     const tid = u && u.teamId != null ? String(u.teamId).trim() : "";
-    if (tid) return tid;
+    if (tid) return resolveCampatrackTeamId(tid);
   } catch (_) {
     /* ignore */
   }
@@ -418,7 +435,8 @@ function getCurrentTeamId() {
 
 function normalizeRowTeamId(row) {
   const v = row && row.teamId != null ? String(row.teamId).trim() : "";
-  return v || TEAM_GENERAL_ID;
+  if (!v) return TEAM_GENERAL_ID;
+  return resolveCampatrackTeamId(v);
 }
 
 function rowBelongsToCurrentTeam(row) {
@@ -462,8 +480,10 @@ function migratePlanningRowsTeamIds(allRows) {
   let changed = false;
   for (const r of allRows) {
     if (!r || typeof r !== "object") continue;
-    if (r.teamId == null || String(r.teamId).trim() === "") {
-      r.teamId = TEAM_GENERAL_ID;
+    const raw = r.teamId == null ? "" : String(r.teamId).trim();
+    const next = raw ? resolveCampatrackTeamId(raw) : TEAM_GENERAL_ID;
+    if (!raw || String(r.teamId).trim() !== next) {
+      r.teamId = next;
       changed = true;
     }
   }
@@ -474,8 +494,10 @@ function migrateMissingTeamIdOnRows(arr) {
   let changed = false;
   for (const r of arr || []) {
     if (!r || typeof r !== "object") continue;
-    if (r.teamId == null || String(r.teamId).trim() === "") {
-      r.teamId = TEAM_GENERAL_ID;
+    const raw = r.teamId == null ? "" : String(r.teamId).trim();
+    const next = raw ? resolveCampatrackTeamId(raw) : TEAM_GENERAL_ID;
+    if (!raw || String(r.teamId).trim() !== next) {
+      r.teamId = next;
       changed = true;
     }
   }
@@ -1483,7 +1505,7 @@ function buildMemorySnapshotForPublish() {
     data_ads_report: serializeDataReal(dataAdsReportMergedCache || dataAdsReport),
     data_anuncios: serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios),
     campaniasUnicasData: JSON.parse(JSON.stringify(campaniasUnicasMergedCache || campaniasUnicasData)),
-    relaciones: JSON.parse(JSON.stringify(relacionesMergedCache || relaciones)),
+    relaciones: JSON.parse(JSON.stringify(ensureRelacionesDraftShape())),
     medidas: JSON.parse(JSON.stringify(medidasMergedCache || medidas)),
     modelo: serializeModelo(modeloMergedCache || modeloAnalitico),
     campatrack_users_db: JSON.parse(JSON.stringify(getCampatrackStoredUsers()))
@@ -1604,20 +1626,15 @@ function applyMemorySnapshotFromBundle(snap) {
     campaniasUnicasData = [];
   }
   if (Array.isArray(snap.relaciones)) {
+    const dr = ensureRelacionesDraftShape();
     const rows = snap.relaciones.map((r) => (typeof r === "object" && r ? { ...r } : r));
-    migrateMissingTeamIdOnRows(rows);
-    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
-    if (distinctTeams.size > 1) relacionesMergedCache = rows;
-    else {
-      const base = Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk();
-      relacionesMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
-    }
-    relaciones = relacionesMergedCache.filter(rowBelongsToCurrentTeam);
+    dr.length = 0;
+    rows.forEach((r) => dr.push(r));
+    syncRelacionesViewFromDraft();
   } else {
-    relacionesMergedCache = [];
-    relaciones = [];
+    ensureRelacionesDraftShape().length = 0;
+    syncRelacionesViewFromDraft();
   }
-  normalizeRelacionesPlanningKeys();
   if (Array.isArray(snap.medidas)) {
     const rows = snap.medidas.map((r) => (typeof r === "object" && r ? { ...r } : r));
     migrateMissingTeamIdOnRows(rows);
@@ -1691,7 +1708,6 @@ function flushAllPersistedStateToDisk() {
     guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache || dataAdsReport));
     guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios));
     guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache || campaniasUnicasData);
-    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache || relaciones);
     guardarEnLocalStorage(LS_KEYS.medidas, medidasMergedCache || medidas);
     guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache || modeloAnalitico));
     guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache || modeloAnalitico));
@@ -5368,7 +5384,32 @@ let adsThumbModalState = {
 };
 let adsPreviewHoverTimer = null;
 let adsPreviewHoverAnchor = null;
+/**
+ * Vista directa: punteros a las mismas filas que en `appState.dataDraft.relaciones`.
+ * Sin filtros ni transformaciones adicionales.
+ */
 let relaciones = [];
+/** Sincroniza la vista `relaciones` desde `appState.dataDraft.relaciones` (directo). */
+function syncRelacionesViewFromDraft() {
+  relaciones.length = 0;
+  ensureRelacionesDraftShape().forEach((r) => {
+    relaciones.push(r);
+  });
+}
+
+function replaceCurrentTeamRelacionesFromMerged(mergedSlice) {
+  const dg = ensureRelacionesDraftShape();
+  dg.length = 0;
+  (Array.isArray(mergedSlice) ? mergedSlice : []).forEach((r) => dg.push(r));
+  syncRelacionesViewFromDraft();
+}
+
+function clearCurrentTeamRelacionesInDraft() {
+  const dg = ensureRelacionesDraftShape();
+  dg.length = 0;
+  syncRelacionesViewFromDraft();
+}
+
 let medidas = [];
 let selectedPlanningKeys = new Set();
 let selectedDataCampaignKeys = new Set();
@@ -5691,7 +5732,7 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     data_general: serializeDataReal(ensureDataGeneralDraftShape()),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
-    relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
+    relaciones: JSON.parse(JSON.stringify(ensureRelacionesDraftShape())),
     campatrack_users_db: getCampatrackStoredUsers(),
     campatrack_teams_db: getCampatrackStoredTeams(),
     campaniasUnicasData: leerJsonLocalStorage(LS_KEYS.campaniasUnicasData),
@@ -5949,6 +5990,10 @@ async function cargarDataDesdeBackend() {
     if (typeof renderTablaData === "function") renderTablaData();
     if (typeof setFechaActualData === "function") setFechaActualData();
     if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
+    if (typeof renderRelacionesTabla === "function") renderRelacionesTabla();
+    if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
+    if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
+    if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
     if (typeof renderDashboard === "function") renderDashboard();
   } catch (err) {
     console.error("Error cargando data:", err);
@@ -6158,6 +6203,23 @@ function hydrateDataGeneralFromApiBundle(bundle) {
 
 try {
   globalThis.__campatrackHydrateDataGeneralFromBundle = hydrateDataGeneralFromApiBundle;
+} catch (_) {
+  /* ignore */
+}
+
+/** Repinta módulo Relaciones desde `appState.dataDraft.relaciones` (misma idea que Planning/Data tras hidratar). */
+function rebuildRelacionesTable() {
+  console.log("Relaciones:", appState.dataDraft.relaciones);
+  syncRelacionesViewFromDraft();
+  renderRelacionesTabla();
+  renderRelacionesPlanningList();
+  renderRelacionesDataList();
+  renderRelacionesEstado();
+}
+
+try {
+  globalThis.__campatrackSyncRelacionesViewFromDraft = syncRelacionesViewFromDraft;
+  globalThis.__campatrackRebuildRelacionesTable = rebuildRelacionesTable;
 } catch (_) {
   /* ignore */
 }
@@ -6513,7 +6575,6 @@ function guardarTodo(opts = {}) {
       appMemoryKV.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios)));
     }
     refreshTeamScopedDataCachesForSnapshot();
-    appMemoryKV.setItem("relaciones", JSON.stringify(relacionesMergedCache || relaciones));
     appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
     appMemoryKV.setItem("modelo", JSON.stringify(serializeModelo(modeloMergedCache || modeloAnalitico)));
   } catch (err) {
@@ -6531,6 +6592,7 @@ function hasAnyDataLoaded() {
 }
 
 function pruneRelacionesWithoutData() {
+  syncRelacionesViewFromDraft();
   const planningKeys = new Set(planningDraftRecords().map((r) => planningKeyFromRecord(r)));
   const latestNameById = getLatestCampaignNameMap(getAllCampaignRows());
   const campaignIds = new Set(Array.from(latestNameById.keys()));
@@ -6553,27 +6615,20 @@ function pruneRelacionesWithoutData() {
       String(x.idCampania) !== String(relaciones[i]?.idCampania) ||
       String(x.nombre) !== String(relaciones[i]?.nombre)
     );
-  relaciones = next;
+  if (changed) replaceCurrentTeamRelacionesFromMerged(next);
   return changed;
 }
 
 function persistRelacionesAndModeloCleared() {
   const tid = getCurrentTeamId();
-  relaciones = [];
+  clearCurrentTeamRelacionesInDraft();
   modeloAnalitico = [];
-  relacionesMergedCache = mergeRowsByTeamId(
-    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
-    relaciones,
-    tid,
-    normalizeRowTeamId
-  );
   modeloMergedCache = mergeRowsByTeamId(
     Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk(),
     modeloAnalitico,
     tid,
     normalizeRowTeamId
   );
-  guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
   guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
   guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   guardarTodo();
@@ -6596,14 +6651,6 @@ function syncDataRelacionesModeloConsistency() {
 
   const relChanged = pruneRelacionesWithoutData();
   if (relChanged) {
-    const tid = getCurrentTeamId();
-    relacionesMergedCache = mergeRowsByTeamId(
-      Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
-      relaciones,
-      tid,
-      normalizeRowTeamId
-    );
-    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
     guardarTodo();
   }
   REGENERAR_MODELO();
@@ -6644,10 +6691,7 @@ function readFullCampaniasUnicasFromDisk() {
 }
 
 function readFullRelacionesFromDisk() {
-  const storedRel = cargarDesdeLocalStorage("relaciones") ?? cargarDesdeLocalStorage(LS_KEYS.relaciones);
-  const rel = Array.isArray(storedRel) ? storedRel.map((x) => ({ ...x })) : [];
-  migrateMissingTeamIdOnRows(rel);
-  return rel;
+  return [];
 }
 
 function readFullMedidasFromDisk() {
@@ -6685,12 +6729,7 @@ function refreshTeamScopedDataCachesForSnapshot() {
     tid,
     normalizeRowTeamId
   );
-  relacionesMergedCache = mergeRowsByTeamId(
-    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
-    relaciones,
-    tid,
-    normalizeRowTeamId
-  );
+  syncRelacionesViewFromDraft();
   medidasMergedCache = mergeRowsByTeamId(
     Array.isArray(medidasMergedCache) && medidasMergedCache.length ? medidasMergedCache : readFullMedidasFromDisk(),
     medidas,
@@ -6736,14 +6775,7 @@ function persistDataState() {
 }
 
 function persistRelacionesState() {
-  const tid = getCurrentTeamId();
-  relacionesMergedCache = mergeRowsByTeamId(
-    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
-    relaciones,
-    tid,
-    normalizeRowTeamId
-  );
-  guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
+  syncRelacionesViewFromDraft();
   REGENERAR_MODELO();
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
@@ -6828,9 +6860,22 @@ function hydratarDesdeLocalStorage() {
   campaniasUnicasData = campaniasUnicasData.map((r) => (r && typeof r === "object" ? { ...r, teamId: tidCu } : r));
   guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache);
 
-  relacionesMergedCache = readFullRelacionesFromDisk();
-  relaciones = relacionesMergedCache.filter(rowBelongsToCurrentTeam);
-  normalizeRelacionesPlanningKeys();
+  ensureRelacionesDraftShape();
+  const drRel = ensureRelacionesDraftShape();
+  if (!drRel.length) {
+    try {
+      const raw = appMemoryKV.getItem("relaciones") ?? appMemoryKV.getItem(LS_KEYS.relaciones);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const stored = normalizarArrayPersistido(parsed) ?? (Array.isArray(parsed) ? parsed : []);
+        const arr = Array.isArray(stored) ? stored.map((x) => (typeof x === "object" && x ? { ...x } : x)) : [];
+        arr.forEach((r) => drRel.push(r));
+      }
+    } catch (err) {
+      console.warn("Migración one-shot relaciones desde memoria", err);
+    }
+  }
+  syncRelacionesViewFromDraft();
 
   medidasMergedCache = readFullMedidasFromDisk();
   medidas = medidasMergedCache.filter(rowBelongsToCurrentTeam);
@@ -6839,11 +6884,9 @@ function hydratarDesdeLocalStorage() {
   modeloAnalitico = modeloMergedCache.filter(rowBelongsToCurrentTeam);
 
   if (!hasDataGeneralLoaded()) {
-    relaciones = [];
+    clearCurrentTeamRelacionesInDraft();
     modeloAnalitico = [];
-    relacionesMergedCache = mergeRowsByTeamId(relacionesMergedCache, [], getCurrentTeamId(), normalizeRowTeamId);
     modeloMergedCache = mergeRowsByTeamId(modeloMergedCache, [], getCurrentTeamId(), normalizeRowTeamId);
-    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
     guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
     guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   } else {
@@ -7343,7 +7386,14 @@ function getAllCampaignRows() {
       idCampania: String(r.idCampania).trim(),
       nombre: String(r.nombreCampana).trim()
     }));
-  return dataReal.concat(fromAnuncios);
+  const fromGeneral = ensureDataGeneralDraftShape()
+    .filter((r) => rowBelongsToCurrentTeam(r))
+    .map((r) => ({
+      idCampania: String(r.idCampania || "").trim(),
+      nombre: String(r.nombre || "").trim()
+    }))
+    .filter((r) => r.idCampania && r.nombre);
+  return fromGeneral.concat(fromAnuncios);
 }
 
 function renderTablaCampañas() {
@@ -8366,37 +8416,8 @@ function parsePlanningKey(key) {
 }
 
 function normalizeRelacionesPlanningKeys() {
-  if (!Array.isArray(relaciones) || !relaciones.length) return;
-  const latestNameById = getLatestCampaignNameMap(getAllCampaignRows());
-  const next = [];
-  const seen = new Set();
-  relaciones.forEach((rel) => {
-    const parsed = parsePlanningKey(rel?.planningKey || "");
-    const relId = String(rel?.idCampania || "").trim();
-    if (!relId) return;
-    const relName = latestNameById.get(relId) || String(rel?.nombre || "").trim();
-    const pushRel = (planningKey) => {
-      const k = `${planningKey}||${relId}`;
-      if (seen.has(k)) return;
-      seen.add(k);
-      next.push({ planningKey, idCampania: relId, nombre: relName });
-    };
-
-    if (parsed.intake) {
-      pushRel(rel.planningKey);
-      return;
-    }
-
-    const matches = planningDraftRecords().filter((r) =>
-      String(r.tipo) === parsed.tipo &&
-      String(r.programa) === parsed.programa &&
-      String(r.plataforma) === parsed.plataforma &&
-      String(r.tracking) === parsed.tracking
-    );
-    if (!matches.length) return;
-    matches.forEach((rec) => pushRel(planningKeyFromRecord(rec)));
-  });
-  relaciones = next;
+  // Relaciones ahora se hidrata y conserva de forma directa (sin transformaciones).
+  syncRelacionesViewFromDraft();
 }
 
 function normalizarTexto(texto) {
@@ -8584,6 +8605,7 @@ function exportRelacionesJsonFile() {
 }
 
 function renderRelacionesEstado() {
+  syncRelacionesViewFromDraft();
   const planningGroups = getPlanningGroups();
   const dataUnique = getDataUniqueList();
   const totalPlanning = planningGroups.length;
@@ -8646,6 +8668,7 @@ function renderRelacionesEstado() {
 }
 
 function renderRelacionesPlanningList() {
+  syncRelacionesViewFromDraft();
   const container = document.getElementById("relPlanningList");
   if (!container) return;
   const linked = getRelLinkedPlanningSet();
@@ -8674,6 +8697,7 @@ function renderRelacionesPlanningList() {
 }
 
 function renderRelacionesDataList() {
+  syncRelacionesViewFromDraft();
   const container = document.getElementById("relDataList");
   if (!container) return;
   const linked = getRelLinkedDataSet();
@@ -8697,6 +8721,7 @@ function renderRelacionesDataList() {
 }
 
 function renderRelacionesTabla() {
+  syncRelacionesViewFromDraft();
   const tbody = document.getElementById("relacionesTbody");
   if (!tbody) return;
   const q = normalizarTexto(relacionesSearchQuery);
@@ -8767,12 +8792,14 @@ function generarModeloAnalitico() {
   const out = [];
   const seen = new Set();
   const dataByCampaignId = new Map();
-  dataReal.forEach((d) => {
-    const id = String(d.idCampania || "").trim();
-    if (!id) return;
-    if (!dataByCampaignId.has(id)) dataByCampaignId.set(id, []);
-    dataByCampaignId.get(id).push(d);
-  });
+  ensureDataGeneralDraftShape()
+    .filter((d) => rowBelongsToCurrentTeam(d))
+    .forEach((d) => {
+      const id = String(d.idCampania || "").trim();
+      if (!id) return;
+      if (!dataByCampaignId.has(id)) dataByCampaignId.set(id, []);
+      dataByCampaignId.get(id).push(d);
+    });
 
   planningDraftRecords().forEach((planning) => {
     const planningKey = planningKeyFromRecord(planning);
@@ -9439,13 +9466,16 @@ function vincularCampanias() {
       const idCampania = String(key || "").trim();
       if (!idCampania) return;
       const nombre = latestNameById.get(idCampania) || "";
-      const exists = relaciones.some((r) => r.planningKey === planningKey && String(r.idCampania || "").trim() === idCampania);
+      const exists = ensureRelacionesDraftShape().some(
+        (r) =>
+          r.planningKey === planningKey &&
+          String(r.idCampania || "").trim() === idCampania
+      );
       if (exists) return;
       const planningRec = getPlanningGroups().find((g) => g.key === planningKey)?.rec;
       const dataRow = getDataUniqueList().find((d) => String(d.idCampania) === idCampania);
       const coincidencia = planningRec && dataRow ? calcularScore(planningRec, dataRow) : null;
-      relaciones.push({
-        teamId: getCurrentTeamId(),
+      ensureRelacionesDraftShape().push({
         planningKey,
         idCampania,
         nombre,
@@ -9523,14 +9553,15 @@ function aplicarSugerencia(idx) {
     const idCampania = String(key || "").trim();
     if (!idCampania) return;
     const nombre = latestNameById.get(idCampania) || "";
-    const exists = relaciones.some(
-      (r) => r.planningKey === sug.planningKey && String(r.idCampania || "").trim() === idCampania
+    const exists = ensureRelacionesDraftShape().some(
+      (r) =>
+        r.planningKey === sug.planningKey &&
+        String(r.idCampania || "").trim() === idCampania
     );
     if (!exists) {
       const dataRow = getDataUniqueList().find((d) => String(d.idCampania) === idCampania);
       const coincidencia = planningRec && dataRow ? calcularScore(planningRec, dataRow) : null;
-      relaciones.push({
-        teamId: getCurrentTeamId(),
+      ensureRelacionesDraftShape().push({
         planningKey: sug.planningKey,
         idCampania,
         nombre,
@@ -9662,7 +9693,13 @@ function initRelacionesModule() {
     if (!btn) return;
     const idx = Number(btn.getAttribute("data-rel-del"));
     if (Number.isFinite(idx)) {
-      relaciones.splice(idx, 1);
+      const rel = relaciones[idx];
+      if (rel) {
+        const dg = ensureRelacionesDraftShape();
+        const j = dg.indexOf(rel);
+        if (j >= 0) dg.splice(j, 1);
+      }
+      syncRelacionesViewFromDraft();
       persistRelacionesState();
       renderRelacionesTabla();
       renderRelacionesPlanningList();
@@ -12591,7 +12628,7 @@ async function tryLocalCampatrackLogin(username, plainPassword) {
 
 function buildCampatrackLocalSessionFromRecord(rec) {
   const modulos = { ...normalizeCampatrackUserModulos(rec.modulos) };
-  const teamId = String(rec.teamId || "").trim() || TEAM_GENERAL_ID;
+  const teamId = resolveCampatrackTeamId(rec.teamId) || TEAM_GENERAL_ID;
   const username = String(rec.usuario || "").trim();
   return {
     id: username,
@@ -12743,7 +12780,14 @@ function persistCampatrackSessionToBrowserStorage() {
   }
   if (!u || !String(u.username || "").trim()) return;
   try {
-    const withId = { ...u, id: u.id != null ? String(u.id) : String(u.username).trim() };
+    const idStr = u.id != null ? String(u.id) : String(u.username).trim();
+    let withId;
+    if (u.campatrackSystemRoot === true) {
+      withId = { ...u, id: idStr };
+    } else {
+      const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
+      withId = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
+    }
     window.currentUser = withId;
     sessionStorage.setItem(CAMPATRACK_BROWSER_USER_KEY, JSON.stringify(withId));
   } catch (e) {
@@ -12758,7 +12802,13 @@ function restaurarCampatrackSessionDesdeBrowserStorage() {
     const u = JSON.parse(raw);
     if (!u || typeof u !== "object" || !String(u.username || "").trim()) return;
     if (u.role === undefined || String(u.role).trim() === "") return;
-    window.currentUser = { ...u, id: u.id != null ? String(u.id) : String(u.username).trim() };
+    const idStr = u.id != null ? String(u.id) : String(u.username).trim();
+    if (u.campatrackSystemRoot === true) {
+      window.currentUser = { ...u, id: idStr };
+    } else {
+      const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
+      window.currentUser = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
+    }
     appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
     appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
     appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
@@ -13825,6 +13875,7 @@ function initCampatrackLogin() {
         if (apiUser.id == null || String(apiUser.id).trim() === "") {
           apiUser.id = String(apiUser.username ?? "").trim();
         }
+        apiUser.teamId = resolveCampatrackTeamId(apiUser.teamId);
         if (!String(apiUser.teamId || "").trim()) apiUser.teamId = TEAM_GENERAL_ID;
         apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
         campatrackApplyLoginSuccessToStorage(apiUser);
@@ -13960,6 +14011,7 @@ function initTabs() {
   };
 
   const setActive = (which) => {
+    console.log("Relaciones actuales (antes cambio módulo):", appState.dataDraft.relaciones);
     applyRoleVisibility();
     const safeModule = isCampatrackModuleAllowed(which) ? which : "dashboard";
     const isCostos = safeModule === "costos";
@@ -14025,6 +14077,7 @@ function initTabs() {
       renderTablaAnuncios();
       renderTablaCampañas();
     }
+    console.log("Relaciones actuales (después cambio módulo):", appState.dataDraft.relaciones);
   };
 
   tabCentroCostos.addEventListener("click", () => setActive("costos"));
@@ -14651,6 +14704,7 @@ export {
   renderModeloTabla,
   renderPreview,
   renderProgramDropdown,
+  rebuildRelacionesTable,
   renderRelacionesDataList,
   renderRelacionesEstado,
   renderRelacionesPlanningList,

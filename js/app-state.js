@@ -9,6 +9,11 @@ export const appState = {
   pendingChanges: 0
 };
 
+/** Solo depuración: misma instancia que importan Planning/Data/Relaciones (`./app-state.js`). */
+if (typeof window !== "undefined") {
+  window.appState = appState;
+}
+
 function apiOrigin() {
   if (typeof window !== "undefined" && window.CAMPATRACK_API_ORIGIN) {
     return String(window.CAMPATRACK_API_ORIGIN).replace(/\/$/, "");
@@ -34,6 +39,12 @@ export function ensureDataGeneralDraftShape() {
   if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
   if (!Array.isArray(appState.dataDraft.data_general)) appState.dataDraft.data_general = [];
   return appState.dataDraft.data_general;
+}
+
+export function ensureRelacionesDraftShape() {
+  if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
+  if (!Array.isArray(appState.dataDraft.relaciones)) appState.dataDraft.relaciones = [];
+  return appState.dataDraft.relaciones;
 }
 
 export function getPlanningRecordIdSeq() {
@@ -64,14 +75,15 @@ function normalizePlanningSliceFromBundle(planningData) {
 }
 
 /**
- * Carga el bundle desde GET /api/data y rellena `dataOriginal` / `dataDraft`.
- * Solo normaliza y aplica la porción Planning en `dataDraft.planning` (el resto lo sigue manejando el impl vía KV).
- */
-/**
- * Rellena `dataOriginal` / `dataDraft` y la porción Planning a partir de un bundle ya parseado (p. ej. tras GET /api/data).
+ * Rellena `dataOriginal` / `dataDraft` y planning / data_general / relaciones desde un bundle (p. ej. GET /api/data).
  * No toca appMemoryKV: eso sigue haciendo `_app.impl.js`.
+ *
+ * @param {object} bundle
+ * @param {{ skipRelacionesHydrate?: boolean }} [opts] Si `skipRelacionesHydrate`, no se reemplaza
+ *   `dataDraft.relaciones` desde el bundle (p. ej. refresco del dashboard): el borrador en memoria sigue siendo la fuente de verdad hasta publicar o login completo.
+ *   Relaciones: solo parse + asignación desde el bundle (sin finalize/merge/migrate hasta confirmar diagnóstico).
  */
-export function hydrateAppStateDraftFromApiBundle(bundle) {
+export function hydrateAppStateDraftFromApiBundle(bundle, opts = {}) {
   if (bundle == null || typeof bundle !== "object" || Array.isArray(bundle)) return;
   const cloneOrig =
     typeof structuredClone === "function" ? structuredClone(bundle) : JSON.parse(JSON.stringify(bundle));
@@ -80,7 +92,7 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   appState.dataOriginal = cloneOrig;
   if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
   for (const key of Object.keys(cloneDraft)) {
-    if (key === "planning_data" || key === "planning" || key === "data_general") continue;
+    if (key === "planning_data" || key === "planning" || key === "data_general" || key === "relaciones") continue;
     appState.dataDraft[key] = cloneDraft[key];
   }
   const slice = normalizePlanningSliceFromBundle(bundle.planning_data);
@@ -103,6 +115,45 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   } catch (_) {
     /* ignore */
   }
+  ensureRelacionesDraftShape();
+  if (opts.skipRelacionesHydrate === true) {
+    try {
+      if (typeof globalThis.__campatrackSyncRelacionesViewFromDraft === "function") {
+        globalThis.__campatrackSyncRelacionesViewFromDraft();
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  } else {
+    let relaciones = bundle.relaciones;
+
+    if (typeof relaciones === "string") {
+      try {
+        relaciones = JSON.parse(relaciones);
+      } catch (e) {
+        console.error("Error parseando relaciones:", e);
+        relaciones = [];
+      }
+    }
+
+    if (Array.isArray(relaciones)) {
+      appState.dataDraft.relaciones = relaciones;
+    } else {
+      appState.dataDraft.relaciones = [];
+    }
+
+    console.log("Relaciones después de hydrate:", appState.dataDraft.relaciones);
+  }
+
+  if (opts.skipRelacionesHydrate !== true) {
+    try {
+      if (typeof globalThis.__campatrackRebuildRelacionesTable === "function") {
+        globalThis.__campatrackRebuildRelacionesTable();
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
 }
 
 export async function initAppState(options = {}) {
@@ -124,6 +175,7 @@ export async function initAppState(options = {}) {
     appState.dataDraft = {};
     ensurePlanningDraftShape();
     ensureDataGeneralDraftShape();
+    ensureRelacionesDraftShape();
     return;
   }
   let bundle = row.data;

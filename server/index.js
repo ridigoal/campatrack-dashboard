@@ -142,20 +142,34 @@ app
         return res.json({ data: null });
       }
 
-      let parsed;
-      if (typeof raw === "string") {
-        try {
-          parsed = JSON.parse(raw);
-        } catch (_parseErr) {
-          return res.status(500).json({ error: "El campo data almacenado no es JSON válido" });
+      if (Buffer.isBuffer(raw)) {
+        raw = raw.toString("utf8");
+      }
+
+      /** Acepta objeto ya parseado por el driver o string JSON; desenrolla doble serialización. */
+      let data = raw;
+      if (typeof data === "string") {
+        for (let i = 0; i < 4 && typeof data === "string"; i++) {
+          const s = data.trim();
+          if (!s) {
+            data = null;
+            break;
+          }
+          try {
+            data = JSON.parse(s);
+          } catch (_parseErr) {
+            return res.status(500).json({ error: "El campo data almacenado no es JSON válido" });
+          }
         }
-      } else if (typeof raw === "object" && !Array.isArray(raw)) {
-        parsed = raw;
-      } else {
+      }
+
+      if (data == null || typeof data !== "object" || Array.isArray(data)) {
         return res.status(500).json({ error: "Formato de data inesperado" });
       }
 
-      return res.json({ data: parsed });
+      // Devolver el mismo objeto guardado en BD (planning_data, data_general, relaciones, …), sin reconstruir claves.
+      console.log("DATA DEVUELTA:", data);
+      return res.json({ data });
     } catch (err) {
       console.error("GET /api/data", err);
       res.status(500).json({ success: false, message: "Error del servidor" });
