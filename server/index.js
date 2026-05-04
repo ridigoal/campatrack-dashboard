@@ -94,7 +94,7 @@ app.get("/api/data", async (req, res) => {
   }
 });
 
-app.post("/api/data", async (req, res) => {
+async function handleSaveCampaignData(req, res) {
   try {
     const user_id =
       typeof req.body?.user_id === "string"
@@ -120,10 +120,13 @@ app.post("/api/data", async (req, res) => {
 
     res.status(200).send("OK");
   } catch (err) {
-    console.error("POST /api/data", err);
+    console.error("POST guardar campaign_data", err);
     res.status(500).send("Error guardando data");
   }
-});
+}
+
+app.post("/api/data", handleSaveCampaignData);
+app.post("/api/save-all", handleSaveCampaignData);
 
 const server = app.listen(PORT, () => {
   console.log(`CampaTrack API escuchando en http://localhost:${PORT}`);

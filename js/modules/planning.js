@@ -149,3 +149,15 @@ export {
   validateCandidateForm,
   validateCentroCostoPresupuesto,
 } from "../_app.impl.js";
+
+export {
+  appState,
+  applyPlanningOriginalFromDraft,
+  bumpAppStatePendingChanges,
+  ensurePlanningDraftShape,
+  getPlanningRecordIdSeq,
+  hydrateAppStateDraftFromApiBundle,
+  initAppState,
+  resetAppStatePendingChanges,
+  setPlanningRecordIdSeq
+} from "../app-state.js";

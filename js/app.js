@@ -3,6 +3,7 @@
  * re-exportaciones por dominio. El orden de imports no altera el comportamiento
  * (solo controla cuándo se evalúa el módulo de implementación la primera vez).
  */
+import "./app-state.js";
 import "./modules/planning.js";
 import "./modules/data.js";
 import "./modules/reportes.js";

@@ -73500,5 +73500,8 @@
       "idCampania": "23782835412",
       "nombre": "DO_Educacion_GA_Search_230426"
     }
+  ],
+  "campatrack_teams_db": [
+    { "id": "team_general", "nombre": "General" }
   ]
 }

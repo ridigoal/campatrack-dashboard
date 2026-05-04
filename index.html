@@ -79,7 +79,16 @@
         <span id="appTopbarDashTitle" class="app-saas-topbar-dashbind-title">Dashboard</span>
       </div>
     </div>
+    <span id="appTeamHeaderBadge" class="app-team-header-badge hidden" aria-live="polite"></span>
     <div class="campatrack-top-header-end">
+      <div class="app-draft-toolbar" role="group" aria-label="Borrador y publicación">
+        <button type="button" id="appDraftDiscardBtn" class="app-draft-btn app-draft-btn--ghost" disabled aria-disabled="true">
+          Descartar borradores
+        </button>
+        <button type="button" id="appDraftPublishBtn" class="app-draft-btn app-draft-btn--publish" disabled aria-disabled="true" aria-label="Revisar y publicar (sin cambios)">
+          <span class="app-draft-publish-label">Revisar y publicar</span>
+        </button>
+      </div>
       <button type="button" id="appThemeToggle" class="app-theme-toggle" aria-pressed="false" aria-label="Activar modo oscuro" title="Modo oscuro">
         <span class="app-theme-toggle-track">
           <span class="app-theme-toggle-icons" aria-hidden="true">
@@ -1210,34 +1219,34 @@
               <i class="fa-solid fa-xmark" aria-hidden="true"></i>
             </button>
           </header>
-          <div class="users-modal-aside-inline" aria-label="Ayuda">
-            <i class="fa-solid fa-user users-aside-ico" aria-hidden="true"></i>
-            <div>
-              <p class="users-aside-title">Información del usuario</p>
-              <p class="users-aside-copy">Todos los campos son obligatorios excepto la foto.</p>
-            </div>
-          </div>
-          <p id="usersFormPageAlert" class="users-global-error users-global-error--form hidden" role="alert"></p>
-
-          <section class="users-surface-card users-surface-card--identity" aria-label="Datos del usuario">
-            <div class="users-form-grid">
-              <div class="users-photo-column">
-                <p class="users-section-label">Foto de perfil <span class="users-optional">(opcional)</span></p>
-                <div id="usersPhotoDropzone" class="users-photo-dropzone" tabindex="0" role="button" aria-label="Arrastra una imagen o haz clic para seleccionar">
-                  <i class="fa-solid fa-cloud-arrow-up users-photo-drop-ico" aria-hidden="true"></i>
-                  <span class="users-photo-drop-text">Arrastra y suelta una imagen o haz clic para seleccionar. Formatos: JPG, PNG. Máx. 2 MB</span>
-                  <span class="users-photo-drop-meta">Máx. 2 MB</span>
-                  <input id="usersPhotoInput" type="file" accept="image/jpeg,image/png" class="hidden" />
-                </div>
-                <p id="usersPhotoError" class="users-field-error hidden" role="alert"></p>
-                <div id="usersPhotoPreviewWrap" class="users-photo-preview-wrap hidden">
-                  <img id="usersPhotoPreview" class="users-photo-preview" src="" alt="" width="120" height="120" />
-                  <button type="button" id="usersPhotoClearBtn" class="btn-toolbar btn-small">Quitar foto</button>
-                </div>
-                <p class="users-photo-hint users-photo-hint--info">Si no agregas una foto, se asignará un avatar por defecto.</p>
+          <div class="user-form-container">
+            <div class="users-modal-aside-inline" aria-label="Ayuda">
+              <i class="fa-solid fa-user users-aside-ico" aria-hidden="true"></i>
+              <div>
+                <p class="users-aside-title">Información del usuario</p>
+                <p class="users-aside-copy">Todos los campos son obligatorios excepto la foto.</p>
               </div>
-              <div class="users-fields-col">
-                <div class="users-field-row">
+            </div>
+            <p id="usersFormPageAlert" class="users-global-error users-global-error--form hidden" role="alert"></p>
+
+            <section class="users-surface-card users-surface-card--identity" aria-label="Datos del usuario">
+              <div class="form-grid users-modal-identity-grid">
+                <div class="users-form-col users-form-col--left">
+                  <div class="users-photo-column">
+                    <p class="users-section-label">Foto de perfil <span class="users-optional">(opcional)</span></p>
+                    <div id="usersPhotoDropzone" class="users-photo-dropzone" tabindex="0" role="button" aria-label="Arrastra una imagen o haz clic para seleccionar">
+                      <i class="fa-solid fa-cloud-arrow-up users-photo-drop-ico" aria-hidden="true"></i>
+                      <span class="users-photo-drop-text">Arrastra y suelta una imagen o haz clic para seleccionar. Formatos: JPG, PNG. Máx. 2 MB</span>
+                      <span class="users-photo-drop-meta">Máx. 2 MB</span>
+                      <input id="usersPhotoInput" type="file" accept="image/jpeg,image/png" class="hidden" />
+                    </div>
+                    <p id="usersPhotoError" class="users-field-error hidden" role="alert"></p>
+                    <div id="usersPhotoPreviewWrap" class="users-photo-preview-wrap hidden">
+                      <img id="usersPhotoPreview" class="users-photo-preview" src="" alt="" width="120" height="120" />
+                      <button type="button" id="usersPhotoClearBtn" class="btn-toolbar btn-small">Quitar foto</button>
+                    </div>
+                    <p class="users-photo-hint users-photo-hint--info">Si no agregas una foto, se asignará un avatar por defecto.</p>
+                  </div>
                   <div class="users-field">
                     <label class="users-field-label" for="usersNombre">Nombre <span class="users-req">*</span></label>
                     <input id="usersNombre" class="users-input" type="text" autocomplete="given-name" placeholder="Ingresa tu nombre" />
@@ -1250,59 +1259,71 @@
                     <p class="users-field-hint">Solo se permite un apellido (sin espacios).</p>
                     <p id="usersApellidoErr" class="users-field-error hidden" role="alert"></p>
                   </div>
-                </div>
-                <div class="users-field">
-                  <label class="users-field-label" for="usersCargo">Cargo <span class="users-req">*</span></label>
-                  <input id="usersCargo" class="users-input" type="text" autocomplete="organization-title" placeholder="Ingresa el cargo del usuario" />
-                  <p id="usersCargoErr" class="users-field-error hidden" role="alert"></p>
-                </div>
-                <div class="users-field">
-                  <label class="users-field-label" for="usersUsuario">Usuario <span class="users-req">*</span></label>
-                  <input id="usersUsuario" class="users-input" type="text" autocomplete="username" placeholder="Ingresa el nombre de usuario" />
-                  <p class="users-field-hint">Este será el usuario para iniciar sesión.</p>
-                  <p id="usersUsuarioErr" class="users-field-error hidden" role="alert"></p>
-                </div>
-                <div class="users-field">
-                  <label class="users-field-label" for="usersClave">Clave <span id="usersClaveReq" class="users-req">*</span></label>
-                  <div class="users-password-wrap">
-                    <input id="usersClave" class="users-input users-input--password" type="password" autocomplete="new-password" minlength="8" placeholder="Ingresa la contraseña" />
-                    <button type="button" id="usersClaveToggle" class="users-password-toggle" aria-label="Mostrar contraseña"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>
+                  <div class="users-field">
+                    <label class="users-field-label" for="usersCargo">Cargo <span class="users-req">*</span></label>
+                    <input id="usersCargo" class="users-input" type="text" autocomplete="organization-title" placeholder="Ingresa el cargo del usuario" />
+                    <p id="usersCargoErr" class="users-field-error hidden" role="alert"></p>
                   </div>
-                  <p id="usersClaveEditHint" class="users-field-hint hidden">Si no deseas cambiar la contraseña, deja este campo en blanco.</p>
-                  <p class="users-field-hint users-clave-hint-new users-clave-hint-accent">Mínimo 8 caracteres.</p>
-                  <p id="usersClaveErr" class="users-field-error hidden" role="alert"></p>
+                </div>
+                <div class="users-form-col users-form-col--right">
+                  <div class="users-field">
+                    <label class="users-field-label" for="usersTeamSelect">Equipo <span class="users-req">*</span></label>
+                    <select id="usersTeamSelect" class="users-input" required aria-required="true"></select>
+                    <p class="users-field-hint">Elige un equipo existente o escribe abajo un nombre para crear uno nuevo.</p>
+                    <p id="usersTeamErr" class="users-field-error hidden" role="alert"></p>
+                  </div>
+                  <div class="users-field">
+                    <label class="users-field-label" for="usersTeamNew">Nuevo equipo (opcional)</label>
+                    <input id="usersTeamNew" class="users-input" type="text" autocomplete="off" placeholder="Ej.: Marketing Educación" />
+                  </div>
+                  <div class="users-field">
+                    <label class="users-field-label" for="usersUsuario">Usuario <span class="users-req">*</span></label>
+                    <input id="usersUsuario" class="users-input" type="text" autocomplete="username" placeholder="Ingresa el nombre de usuario" />
+                    <p class="users-field-hint">Este será el usuario para iniciar sesión.</p>
+                    <p id="usersUsuarioErr" class="users-field-error hidden" role="alert"></p>
+                  </div>
+                  <div class="users-field">
+                    <label class="users-field-label" for="usersClave">Clave <span id="usersClaveReq" class="users-req">*</span></label>
+                    <div class="users-password-wrap">
+                      <input id="usersClave" class="users-input users-input--password" type="password" autocomplete="new-password" minlength="8" placeholder="Ingresa la contraseña" />
+                      <button type="button" id="usersClaveToggle" class="users-password-toggle" aria-label="Mostrar contraseña"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>
+                    </div>
+                    <p id="usersClaveEditHint" class="users-field-hint hidden">Si no deseas cambiar la contraseña, deja este campo en blanco.</p>
+                    <p class="users-field-hint users-clave-hint-new users-clave-hint-accent">Mínimo 8 caracteres.</p>
+                    <p id="usersClaveErr" class="users-field-error hidden" role="alert"></p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section class="users-surface-card users-surface-card--modules" aria-label="Permisos por módulo">
-            <div class="users-modules-section users-modules-section--card">
-              <div class="users-modules-head">
-                <div>
-                  <h2 class="users-modules-title"><i class="fa-solid fa-lock users-modules-title-ico" aria-hidden="true"></i> Acceso a módulos</h2>
-                  <p class="users-modules-lead">Selecciona los módulos a los que el usuario tendrá acceso.</p>
+            <section class="users-surface-card users-surface-card--modules full-width" aria-label="Permisos por módulo">
+              <div class="users-modules-section users-modules-section--card">
+                <div class="users-modules-head">
+                  <div>
+                    <h2 class="users-modules-title"><i class="fa-solid fa-lock users-modules-title-ico" aria-hidden="true"></i> Acceso a módulos</h2>
+                    <p class="users-modules-lead">Selecciona los módulos a los que el usuario tendrá acceso.</p>
+                  </div>
+                  <div class="users-modules-actions">
+                    <label class="users-select-all-label">
+                      <input type="checkbox" id="usersSelectAllModsChk" />
+                      <span>Seleccionar todos</span>
+                    </label>
+                    <button type="button" id="usersClearMods" class="users-link-btn users-link-btn--danger">Limpiar selección</button>
+                  </div>
                 </div>
-                <div class="users-modules-actions">
-                  <label class="users-select-all-label">
-                    <input type="checkbox" id="usersSelectAllModsChk" />
-                    <span>Seleccionar todos</span>
-                  </label>
-                  <button type="button" id="usersClearMods" class="users-link-btn users-link-btn--danger">Limpiar selección</button>
-                </div>
+                <p id="usersModulosErr" class="users-field-error hidden" role="alert"></p>
+                <div id="usersModCards" class="users-mod-grid"></div>
               </div>
-              <p id="usersModulosErr" class="users-field-error hidden" role="alert"></p>
-              <div id="usersModCards" class="users-mod-grid"></div>
-            </div>
-          </section>
+            </section>
 
-          <footer class="users-page-footer users-page-footer--modal">
-            <p class="users-footer-note"><i class="fa-solid fa-circle-info users-footer-note-ico" aria-hidden="true"></i> La información será guardada de forma segura en la base de datos local. Al guardar se descarga <strong>data.json</strong> para reemplazarlo en el proyecto si lo necesitas.</p>
-            <div class="users-footer-actions">
-              <button type="button" id="usersCancelBtn" class="btn-toolbar users-btn-cancel-outline">Cancelar</button>
-              <button type="button" id="usersSaveBtn" class="btn-toolbar btn-primary users-btn-save-primary"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> <span id="usersSaveBtnLabel">Guardar usuario</span></button>
-            </div>
-          </footer>
+            <footer class="users-page-footer users-page-footer--modal">
+              <p class="users-footer-note"><i class="fa-solid fa-circle-info users-footer-note-ico" aria-hidden="true"></i> Los cambios quedan en borrador hasta que pulses <strong>Publicar</strong>; entonces se sincronizan con el servidor (sin descargar archivos).</p>
+              <div class="users-footer-actions">
+                <button type="button" id="usersCancelBtn" class="btn-toolbar users-btn-cancel-outline">Cancelar</button>
+                <button type="button" id="usersSaveBtn" class="btn-toolbar btn-primary users-btn-save-primary"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> <span id="usersSaveBtnLabel">Guardar usuario</span></button>
+              </div>
+            </footer>
+          </div>
         </div>
       </div>
     </div>
@@ -1489,6 +1510,23 @@
       <div class="app-dialog-actions">
         <button type="button" id="resetSystemCancelBtn" class="app-dialog-btn app-dialog-btn-secondary">Cancelar</button>
         <button type="button" id="resetSystemConfirmBtn" class="app-dialog-btn app-dialog-btn-primary app-dialog-btn-danger">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appPublishModalOverlay" class="app-publish-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="appPublishModalTitle" aria-hidden="true" data-phase="progress">
+    <div class="app-publish-card" role="document">
+      <div id="appPublishModalPhaseProgress" class="app-publish-phase">
+        <h3 id="appPublishModalTitle" class="app-publish-title">Publicando cambios…</h3>
+        <p class="app-publish-sub">Por favor espera mientras guardamos la información.</p>
+        <div class="app-publish-progress" aria-hidden="true">
+          <div id="appPublishProgressBar" class="app-publish-progress-bar"></div>
+        </div>
+      </div>
+      <div id="appPublishModalPhaseDone" class="app-publish-phase app-publish-phase--done hidden">
+        <div class="app-publish-success-ico" aria-hidden="true"><i class="fa-solid fa-circle-check"></i></div>
+        <h3 class="app-publish-title">Cambios publicados correctamente</h3>
+        <p class="app-publish-sub">Tu información ya está guardada.</p>
       </div>
     </div>
   </div>

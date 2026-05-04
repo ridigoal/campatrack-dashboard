@@ -3396,28 +3396,21 @@ textarea.bitacora-editor {
 .planning-table thead .sticky-col-tipo {
   background: #000;
   color: #fff;
-  z-index: calc(var(--z-table-sticky) + 1);
+  z-index: 12;
 }
 
 .planning-table thead .sticky-col-program {
   background: #000;
   color: #fff;
-  z-index: var(--z-table-sticky);
+  z-index: 11;
 }
 
 .planning-table tbody .sticky-col-tipo {
-  z-index: 4;
+  z-index: 7;
 }
 
 .planning-table tbody .sticky-col-program {
-  z-index: 3;
-}
-
-.planning-table tr.row-selected td,
-.planning-table tr.row-selected .sticky-col-tipo,
-.planning-table tr.row-selected .sticky-col-program {
-  background: #1d4ed8 !important;
-  color: #fff !important;
+  z-index: 6;
 }
 
 .planning-table tbody tr[data-record-id] {
@@ -3459,16 +3452,24 @@ textarea.bitacora-editor {
   overflow-y: auto;
 }
 
-#planningModule .planning-table thead tr:first-child th {
+/* Fila 1: esquina Tipo/Programa por encima de todo; el resto queda por debajo de columnas sticky del cuerpo al scroll horizontal */
+#planningModule .planning-table thead tr:first-child th:not(.sticky-col-tipo):not(.sticky-col-program) {
   position: sticky;
   top: 0;
-  z-index: calc(var(--z-table-sticky) + 2);
+  z-index: 4;
+}
+
+#planningModule .planning-table thead tr:first-child th.sticky-col-tipo,
+#planningModule .planning-table thead tr:first-child th.sticky-col-program {
+  position: sticky;
+  top: 0;
+  z-index: 13;
 }
 
 #planningModule .planning-table thead tr:nth-child(2) th {
   position: sticky;
   top: 40px;
-  z-index: calc(var(--z-table-sticky) + 1);
+  z-index: 4;
 }
 
 .row-intake {
@@ -5974,7 +5975,7 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   margin-bottom: 18px;
 }
 
-#mainAppShell .users-surface-card--identity .users-form-grid {
+#mainAppShell .users-surface-card--identity .users-modal-identity-grid {
   margin-bottom: 0;
 }
 
@@ -7009,6 +7010,26 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   background: #fafbff;
 }
 
+/* Selección de fila: solo resaltado; no tocar pills mensuales ni forzar re-render (el clic en JS solo alterna clases) */
+#planningModule .planning-table tbody tr.row-selected > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
+  background: rgba(37, 99, 235, 0.1) !important;
+}
+
+#planningModule .planning-table tbody tr.row-selected > td.sticky-col-tipo,
+#planningModule .planning-table tbody tr.row-selected > td.sticky-col-program {
+  background: rgba(37, 99, 235, 0.14) !important;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.06), inset 4px 0 0 #2563eb;
+}
+
+#planningModule .planning-table tbody tr.row-selected:hover > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
+  background: rgba(37, 99, 235, 0.13) !important;
+}
+
+#planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo,
+#planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-program {
+  background: rgba(37, 99, 235, 0.17) !important;
+}
+
 #planningModule .planning-table-saas tbody tr[data-record-id] td {
   padding: 12px 11px;
   vertical-align: middle;
@@ -7251,36 +7272,6 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   border-radius: 8px;
   background: rgba(16, 185, 129, 0.1);
   font-weight: 800;
-}
-
-#planningModule .planning-table tr.row-selected .planning-tipo-badge,
-#planningModule .planning-table tr.row-selected .planning-status-badge,
-#planningModule .planning-table tr.row-selected .planning-leads-total-chip {
-  background: rgba(255, 255, 255, 0.22) !important;
-  color: #fff !important;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-}
-
-#planningModule .planning-table tr.row-selected .planning-campaign-sub {
-  color: rgba(255, 255, 255, 0.88);
-}
-
-#planningModule .planning-table tr.row-selected .planning-plat-cell i {
-  color: #fff;
-}
-
-#planningModule .planning-table tr.row-selected .planning-tracking-label {
-  color: rgba(255, 255, 255, 0.95);
-}
-
-#planningModule .planning-table tr.row-selected .planning-presupuesto-val {
-  color: #fff;
-}
-
-#planningModule .planning-table tr.row-selected .planning-pill {
-  background: rgba(255, 255, 255, 0.2) !important;
-  color: #fff !important;
-  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 /* ——— RELACIONES: vista SaaS ——— */
@@ -11046,6 +11037,25 @@ body.dark-mode #mainAppShell #planningModule .planning-table tbody .sticky-col-p
   box-shadow: 2px 0 0 rgba(0, 0, 0, 0.25);
 }
 
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
+  background: rgba(96, 165, 250, 0.12) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.sticky-col-program {
+  background: rgba(96, 165, 250, 0.18) !important;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.25), inset 4px 0 0 #60a5fa;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
+  background: rgba(96, 165, 250, 0.16) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-program {
+  background: rgba(96, 165, 250, 0.22) !important;
+}
+
 body.dark-mode #mainAppShell .group-header {
   background: #020617 !important;
   color: #f8fafc !important;
@@ -12021,6 +12031,202 @@ body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
   flex-shrink: 0;
 }
 
+.app-team-header-badge {
+  flex: 0 1 auto;
+  max-width: 220px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted, #5c6570);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.dark-mode .app-team-header-badge {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.app-draft-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-right: 4px;
+}
+
+.app-draft-btn {
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+  white-space: nowrap;
+}
+
+.app-draft-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.app-draft-btn--ghost {
+  background: transparent;
+  color: #64748b;
+  border-color: rgba(148, 163, 184, 0.55);
+}
+
+.app-draft-btn--ghost:not(:disabled):hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: #334155;
+}
+
+.app-draft-btn--publish {
+  background: #e2e8f0;
+  color: #64748b;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+
+.app-draft-btn--publish.app-draft-btn--publish-active {
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  border-color: rgba(37, 99, 235, 0.65);
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+}
+
+.app-draft-btn--publish.app-draft-btn--publish-active:hover {
+  filter: brightness(1.04);
+}
+
+.app-draft-publish-count {
+  font-weight: 800;
+  margin-left: 4px;
+  opacity: 0.95;
+}
+
+.app-publish-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) - 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.app-publish-overlay.hidden {
+  display: none;
+}
+
+.app-publish-card {
+  width: min(420px, 100%);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.18),
+    0 0 0 1px rgba(148, 163, 184, 0.2);
+  padding: 28px 26px 26px;
+  text-align: center;
+}
+
+.app-publish-phase {
+  transition: opacity 0.35s ease;
+}
+
+.app-publish-phase.hidden {
+  display: none;
+}
+
+.app-publish-title {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.app-publish-sub {
+  margin: 0 0 20px;
+  font-size: 0.9rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.app-publish-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.app-publish-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #60a5fa, #2563eb);
+  transition: width 0.12s ease-out;
+}
+
+.app-publish-phase--done .app-publish-success-ico {
+  font-size: 3rem;
+  color: #16a34a;
+  margin-bottom: 12px;
+  line-height: 1;
+}
+
+.app-publish-phase--done .app-publish-title {
+  color: #14532d;
+}
+
+body.dark-mode #mainAppShell .app-draft-btn--ghost {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+body.dark-mode #mainAppShell .app-draft-btn--ghost:not(:disabled):hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: #e2e8f0;
+}
+
+body.dark-mode #mainAppShell .app-draft-btn--publish:disabled {
+  background: #334155;
+  color: #94a3b8;
+  border-color: #475569;
+}
+
+body.dark-mode #mainAppShell .app-draft-btn--publish.app-draft-btn--publish-active {
+  box-shadow: 0 2px 14px rgba(37, 99, 235, 0.45);
+}
+
+body.dark-mode #mainAppShell .app-publish-card {
+  background: #1e293b;
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(51, 65, 85, 0.6);
+}
+
+body.dark-mode #mainAppShell .app-publish-title {
+  color: #f1f5f9;
+}
+
+body.dark-mode #mainAppShell .app-publish-sub {
+  color: #94a3b8;
+}
+
+body.dark-mode #mainAppShell .app-publish-progress {
+  background: #334155;
+}
+
 .campatrack-top-header-end .app-profile-wrap {
   flex-direction: row;
   padding: 0;
@@ -12183,11 +12389,49 @@ body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
 }
 
 #mainAppShell #usersModal .modal-content.users-modal-content--users {
-  width: min(920px, 100%);
+  width: min(1200px, 96vw);
+  max-width: 100%;
   max-height: min(92vh, 900px);
   padding: 20px 22px 22px;
   text-align: left;
   overflow-y: auto;
+}
+
+#mainAppShell #usersModal .user-form-container {
+  max-width: 1200px;
+  width: 95%;
+  margin: 0 auto;
+}
+
+#mainAppShell #usersModal .form-grid.users-modal-identity-grid,
+#mainAppShell #usersModal .users-modal-identity-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+#mainAppShell #usersModal .users-form-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+#mainAppShell #usersModal .full-width {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  #mainAppShell #usersModal .form-grid.users-modal-identity-grid,
+  #mainAppShell #usersModal .users-modal-identity-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#mainAppShell #usersModal .users-photo-dropzone {
+  min-height: 138px;
 }
 
 #mainAppShell #usersModal .modal-content.users-modal-content--users > h2:first-child,

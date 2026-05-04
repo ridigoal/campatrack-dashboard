@@ -1,33 +1,71 @@
-document.addEventListener("DOMContentLoaded", async () => {
-  const isVercel = window.location.hostname.includes("vercel.app");
+import {
+  appState,
+  ensurePlanningDraftShape,
+  getPlanningRecordIdSeq,
+  setPlanningRecordIdSeq,
+  bumpAppStatePendingChanges,
+  resetAppStatePendingChanges,
+  applyPlanningOriginalFromDraft,
+  hydrateAppStateDraftFromApiBundle,
+  initAppState
+} from "./app-state.js";
 
-  if (isVercel) {
-    try {
-      const dataGuardada = localStorage.getItem("cc_data");
-
-      if (!dataGuardada) {
-        console.log("Cargando data inicial desde JSON");
-
-        const res = await fetch("./data.json");
-        const data = await res.json();
-
-        localStorage.setItem("cc_data", JSON.stringify(data.cc_data));
-        localStorage.setItem("planning_data", JSON.stringify(data.planning_data));
-        localStorage.setItem("catalogos_sistema", JSON.stringify(data.catalogos_sistema));
-        localStorage.setItem("data_general", JSON.stringify(data.data_general));
-        localStorage.setItem("data_ads_report", JSON.stringify(data.data_ads_report));
-        localStorage.setItem("data_anuncios", JSON.stringify(data.data_anuncios));
-        localStorage.setItem("relaciones", JSON.stringify(data.relaciones));
-        if (Array.isArray(data.campatrack_users_db)) {
-          localStorage.setItem("campatrack_users_db", JSON.stringify(data.campatrack_users_db));
-        }
-
-        console.log("Data cargada correctamente");
-      }
-    } catch (error) {
-      console.error("Error cargando JSON:", error);
+/**
+ * Almacén clave-valor en **memoria** (no usa `window.localStorage` del navegador).
+ * Tras el login, la data se hidrata con GET /api/data; la persistencia duradera es POST al publicar.
+ */
+const appMemoryKV = (function createMemoryKV() {
+  const m = Object.create(null);
+  return {
+    getItem(k) {
+      const key = String(k);
+      return Object.prototype.hasOwnProperty.call(m, key) ? m[key] : null;
+    },
+    setItem(k, v) {
+      m[String(k)] = String(v);
+    },
+    removeItem(k) {
+      delete m[String(k)];
+    },
+    clear() {
+      for (const key of Object.keys(m)) delete m[key];
     }
+  };
+})();
+
+/** Sesión y flags de UI en memoria (no usa `window.sessionStorage`). Se pierde al recargar la pestaña. */
+const appMemorySession = (function createMemoryKV() {
+  const m = Object.create(null);
+  return {
+    getItem(k) {
+      const key = String(k);
+      return Object.prototype.hasOwnProperty.call(m, key) ? m[key] : null;
+    },
+    setItem(k, v) {
+      m[String(k)] = String(v);
+    },
+    removeItem(k) {
+      delete m[String(k)];
+    },
+    clear() {
+      for (const key of Object.keys(m)) delete m[key];
+    }
+  };
+})();
+
+/** JSON del último bundle aplicado tras publicar con éxito en la API (equivalente a `dataOriginal` serializado). */
+let dataOriginalBundleJson = null;
+
+function syncDataOriginalFromPublishedDraft() {
+  try {
+    dataOriginalBundleJson = JSON.stringify(construirSnapshotDesdeLocalStorageComoExport());
+  } catch (_) {
+    dataOriginalBundleJson = null;
   }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  /* Sin semilla desde data.json: la carga inicial ocurre tras login vía `cargarDataDesdeAPI`. */
 });
 
 const MONTHS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -77,9 +115,9 @@ let planningFechaRangoPicker = null;
 let planningFilterFechaIni = "";
 let planningFilterFechaFin = "";
 
-/** Cada elemento = un registro (un intake) */
-const records = [];
-let recordIdSeq = 1;
+/** Filas Planning = `appState.dataDraft.planning.records` (misma referencia; piloto estado central). */
+ensurePlanningDraftShape();
+var records = appState.dataDraft.planning.records;
 let selectedRecordId = null;
 let editingRecordId = null;
 const bitacoraData = [];
@@ -115,24 +153,7 @@ function samePlanningRecordId(a, b) {
 
 /** Asigna id a filas legacy y desduplica ids repetidos para que Editar resuelva siempre la fila correcta. */
 function ensurePlanningRecordsHaveStableUniqueIds() {
-  let changed = false;
-  const seen = new Set();
-  for (const r of records) {
-    const key = r.id == null || r.id === "" ? "" : String(r.id);
-    const invalid = !key || key === "undefined" || key === "null" || seen.has(key);
-    if (invalid) {
-      let nid;
-      do {
-        nid = newPlanningRecordId();
-      } while (seen.has(String(nid)));
-      r.id = nid;
-      seen.add(String(nid));
-      changed = true;
-    } else {
-      seen.add(key);
-    }
-  }
-  return changed;
+  return ensurePlanningArrayStableUniqueIds(records);
 }
 /** Fechas de referencia en edición (tras hidratar) para detectar cambio real de rango sin falsos positivos. */
 let editCampaignBaselineDates = null;
@@ -148,6 +169,14 @@ let centroCostoIdSeq = 1;
 let selectedCcRowId = null;
 /** Consumo por campaña (planning record id) — `consumo_por_campaña` */
 const consumoPorCampaña = {};
+
+/** Tras el arranque: aplazar escritura a localStorage/API hasta "Publicar" (borrador en memoria). */
+let appDeferredDiskPersistence = false;
+let appPublishSnapshotBaselineJson = null;
+let appPendingPublishCount = 0;
+let appPublishModalBusy = false;
+/** >0 mientras se refresca UI tras descartar/publicar: no contar persistencias programáticas como borrador. */
+let appSuppressDraftNotifications = 0;
 
 const DEFAULT_PROGRAMS = [
   { tipo: "MBA", nombre: "Administracion de Negocios" },
@@ -249,7 +278,7 @@ function resetProgramsFromDefaults() {
 function hydratarProgramas() {
   resetProgramsFromDefaults();
   try {
-    const raw = localStorage.getItem("programas");
+    const raw = appMemoryKV.getItem("programas");
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) {
@@ -263,7 +292,7 @@ function hydratarProgramas() {
         });
       }
     }
-    const legacyRaw = localStorage.getItem(LS_PLANNING_DATA) || localStorage.getItem("planningData");
+    const legacyRaw = appMemoryKV.getItem(LS_PLANNING_DATA) || appMemoryKV.getItem("planningData");
     if (legacyRaw) {
       const data = JSON.parse(legacyRaw);
       if (data && typeof data === "object" && Array.isArray(data.programs)) {
@@ -285,7 +314,7 @@ function hydratarProgramas() {
 
 function persistProgramas() {
   try {
-    localStorage.setItem("programas", JSON.stringify(programs));
+    appMemoryKV.setItem("programas", JSON.stringify(programs));
   } catch (err) {
     console.warn("No se pudo guardar programas", err);
   }
@@ -299,6 +328,230 @@ const LS_PLANNING_DATA = "planning_data";
 const LS_CONSUMO_CAMPANA = "consumo_por_campaña";
 const LS_BITACORA_DATA = "bitacora_data";
 const LS_CATALOGOS_SISTEMA = "catalogos_sistema";
+/** Equipos (contenedor multiusuario). Datos legacy sin `teamId` se migran a `team_general`. */
+const LS_CAMPATRACK_TEAMS = "campatrack_teams_db";
+const TEAM_GENERAL_ID = "team_general";
+
+/** Copia completa en memoria de planning (todos los equipos) para merge al persistir y borradores. */
+let planningMergedRecordsCache = null;
+let dataRealMergedCache = null;
+let dataAdsReportMergedCache = null;
+let dataAnunciosMergedCache = null;
+let relacionesMergedCache = null;
+let modeloMergedCache = null;
+let medidasMergedCache = null;
+let campaniasUnicasMergedCache = null;
+
+function getCampatrackStoredTeams() {
+  try {
+    const raw = appMemoryKV.getItem(LS_CAMPATRACK_TEAMS);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCampatrackStoredTeams(list) {
+  try {
+    appMemoryKV.setItem(LS_CAMPATRACK_TEAMS, JSON.stringify(Array.isArray(list) ? list : []));
+  } catch (e) {
+    console.warn("No se pudo guardar equipos", e);
+  }
+}
+
+function newCampatrackTeamId() {
+  return `team_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function ensureCampatrackTeamsSeed() {
+  let list = getCampatrackStoredTeams();
+  if (!list.length) {
+    list = [{ id: TEAM_GENERAL_ID, nombre: "General" }];
+    saveCampatrackStoredTeams(list);
+    return list;
+  }
+  if (!list.some((t) => String(t?.id) === TEAM_GENERAL_ID)) {
+    list.unshift({ id: TEAM_GENERAL_ID, nombre: "General" });
+    saveCampatrackStoredTeams(list);
+  }
+  return list;
+}
+
+function resolveCampatrackTeamNombre(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) return "";
+  const t = getCampatrackStoredTeams().find((x) => String(x?.id) === id);
+  return String(t?.nombre || "").trim();
+}
+
+/**
+ * Equipo activo = sesión (`user.teamId`) o equipo general (legacy / sin sesión).
+ * `getUser` está declarado más abajo; las funciones declaradas quedan disponibles en todo el módulo.
+ */
+function getCurrentTeamId() {
+  try {
+    const u = getUser();
+    if (u && u.campatrackSystemRoot === true) return TEAM_GENERAL_ID;
+    const tid = u && u.teamId != null ? String(u.teamId).trim() : "";
+    if (tid) return tid;
+  } catch (_) {
+    /* ignore */
+  }
+  return TEAM_GENERAL_ID;
+}
+
+function normalizeRowTeamId(row) {
+  const v = row && row.teamId != null ? String(row.teamId).trim() : "";
+  return v || TEAM_GENERAL_ID;
+}
+
+function rowBelongsToCurrentTeam(row) {
+  try {
+    const u = getUser();
+    if (u && u.campatrackSystemRoot === true) return true;
+  } catch (_) {
+    /* ignore */
+  }
+  return String(normalizeRowTeamId(row)) === String(getCurrentTeamId());
+}
+
+function mergeRowsByTeamId(fullBase, memoryRows, teamId, getTeamIdFromRow) {
+  const tid = String(teamId);
+  const base = Array.isArray(fullBase) ? fullBase : [];
+  const others = base.filter((r) => String(getTeamIdFromRow(r)) !== tid);
+  const stamped = (memoryRows || []).map((r) => {
+    const tr = typeof r === "object" && r ? { ...r } : r;
+    if (tr && typeof tr === "object") tr.teamId = tid;
+    return tr;
+  });
+  return others.concat(stamped);
+}
+
+function readParsedPlanningPayloadFromDisk() {
+  try {
+    const raw = appMemoryKV.getItem("planning") || appMemoryKV.getItem(LS_PLANNING_DATA) || appMemoryKV.getItem("planningData");
+    if (!raw) return { rows: [], recordIdSeq: 1 };
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) return { rows: data, recordIdSeq: null };
+    if (data && typeof data === "object" && Array.isArray(data.records)) {
+      return { rows: data.records, recordIdSeq: data.recordIdSeq };
+    }
+  } catch (err) {
+    console.warn("readParsedPlanningPayloadFromDisk", err);
+  }
+  return { rows: [], recordIdSeq: 1 };
+}
+
+function migratePlanningRowsTeamIds(allRows) {
+  let changed = false;
+  for (const r of allRows) {
+    if (!r || typeof r !== "object") continue;
+    if (r.teamId == null || String(r.teamId).trim() === "") {
+      r.teamId = TEAM_GENERAL_ID;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function migrateMissingTeamIdOnRows(arr) {
+  let changed = false;
+  for (const r of arr || []) {
+    if (!r || typeof r !== "object") continue;
+    if (r.teamId == null || String(r.teamId).trim() === "") {
+      r.teamId = TEAM_GENERAL_ID;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function ensurePlanningArrayStableUniqueIds(arr) {
+  let changed = false;
+  const seen = new Set();
+  for (const r of arr) {
+    if (!r || typeof r !== "object") continue;
+    const key = r.id == null || r.id === "" ? "" : String(r.id);
+    const invalid = !key || key === "undefined" || key === "null" || seen.has(key);
+    if (invalid) {
+      let nid;
+      do {
+        nid = newPlanningRecordId();
+      } while (seen.has(String(nid)));
+      r.id = nid;
+      seen.add(String(nid));
+      changed = true;
+    } else {
+      seen.add(key);
+    }
+  }
+  return changed;
+}
+
+function recomputePlanningMergedCacheFromRecords() {
+  const tid = getCurrentTeamId();
+  const base =
+    shouldDeferDiskPersistence() && Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
+      ? planningMergedRecordsCache.slice()
+      : readParsedPlanningPayloadFromDisk().rows;
+  planningMergedRecordsCache = mergeRowsByTeamId(base, records, tid, normalizeRowTeamId);
+}
+
+function reloadPlanningWorkingSliceFromCache() {
+  const tid = getCurrentTeamId();
+  const src = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache : [];
+  records.length = 0;
+  src.forEach((r) => {
+    if (rowBelongsToCurrentTeam(r)) records.push(r);
+  });
+  const maxId = records.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
+  if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
+    setPlanningRecordIdSeq(Math.max(1, Math.round(Number(getPlanningRecordIdSeq())), maxId + 1));
+  } else if (maxId) {
+    setPlanningRecordIdSeq(maxId + 1);
+  }
+}
+
+function writePlanningPayloadToLocalStorage(mergedRows, seq) {
+  const payload = { records: mergedRows, recordIdSeq: seq };
+  try {
+    appMemoryKV.setItem(LS_PLANNING_DATA, JSON.stringify(payload));
+    appMemoryKV.setItem("planning", JSON.stringify(mergedRows));
+  } catch (err) {
+    console.warn("No se pudo guardar planning_data", err);
+  }
+}
+
+function readFullConsumoFromDisk() {
+  try {
+    const raw = appMemoryKV.getItem(LS_CONSUMO_CAMPANA);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function getPlanningRowByIdFromMergedCache(id) {
+  const key = String(id);
+  const src = Array.isArray(planningMergedRecordsCache) ? planningMergedRecordsCache : [];
+  return src.find((r) => r && samePlanningRecordId(r.id, key)) || null;
+}
+
+function mergeConsumoForPersist() {
+  const tid = getCurrentTeamId();
+  const disk = readFullConsumoFromDisk();
+  const out = { ...disk };
+  for (const k of Object.keys(out)) {
+    const rec = getPlanningRowByIdFromMergedCache(k);
+    if (rec && String(normalizeRowTeamId(rec)) === tid) delete out[k];
+  }
+  Object.assign(out, consumoPorCampaña);
+  return out;
+}
 const BITACORA_FIELDS = ["fecha", "tipo", "programa", "cambios", "observaciones"];
 const BITACORA_TIPO_OPTIONS = ["MA", "SE", "PE", "MBA", "DI", "DO", "Charla", "Webinar", "Alcance"];
 
@@ -309,19 +562,24 @@ const CATALOGO_SEMILLA_PLATAFORMAS = ["Meta", "Google", "TikTok", "LinkedIn"];
 const CATALOGO_SEMILLA_INTAKES = ["Intake 1", "Intake 2", "Intake 3", "Intake 4"];
 
 function persistCentrosCostos() {
-  try {
-    localStorage.setItem(LS_CC_DATA, JSON.stringify({ centros: centrosCostos, seq: centroCostoIdSeq }));
-    localStorage.setItem("centro_costos", JSON.stringify(centrosCostos));
-  } catch (err) {
-    console.warn("No se pudo guardar cc_data", err);
+  if (!shouldDeferDiskPersistence()) {
+    try {
+      appMemoryKV.setItem(LS_CC_DATA, JSON.stringify({ centros: centrosCostos, seq: centroCostoIdSeq }));
+      appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
+    } catch (err) {
+      console.warn("No se pudo guardar cc_data", err);
+    }
+    guardarTodo({ incluirTablasData: false });
+    guardarDebounce();
+  } else {
+    notifyDraftChanged();
   }
-  guardarTodo({ incluirTablasData: false });
-  guardarDebounce();
 }
 
 function persistConsumoPorCampaña() {
+  if (shouldDeferDiskPersistence()) return;
   try {
-    localStorage.setItem(LS_CONSUMO_CAMPANA, JSON.stringify(consumoPorCampaña));
+    appMemoryKV.setItem(LS_CONSUMO_CAMPANA, JSON.stringify(mergeConsumoForPersist()));
   } catch (err) {
     console.warn("No se pudo guardar consumo_por_campaña", err);
   }
@@ -329,7 +587,7 @@ function persistConsumoPorCampaña() {
 
 function hydratarCentrosCostos() {
   try {
-    const raw = localStorage.getItem("centro_costos") || localStorage.getItem(LS_CC_DATA) || localStorage.getItem("centros_costos");
+    const raw = appMemoryKV.getItem("centro_costos") || appMemoryKV.getItem(LS_CC_DATA) || appMemoryKV.getItem("centros_costos");
     if (!raw) return;
     const data = JSON.parse(raw);
     centrosCostos.length = 0;
@@ -632,50 +890,12 @@ function sortCcIntakeKeysForSummary(keys) {
 }
 
 function exportCcCentrosCostosCsv() {
-  const escCsv = (v) => {
-    const s = String(v ?? "").replace(/"/g, '""');
-    return `"${s}"`;
-  };
-  const lines = [
-    [
-      "Agrupador",
-      "Nombre del proyecto",
-      "Nombre de la cuenta",
-      "Descripción del servicio / item",
-      "Inversión total",
-      "Inversión usada",
-      "Saldo",
-      "% usado",
-      "Estado"
-    ].join(",")
-  ];
-  centrosCostos.forEach((cc) => {
-    const used = getUsedInversionCentro(cc.id, null);
-    const inversionTotal = Number(cc.inversionTotal) || 0;
-    const saldo = Math.max(0, inversionTotal - used);
-    if (!centroCostoPasaFiltrosTabla(cc, used, inversionTotal)) return;
-    const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
-    const riesgo = inversionTotal > 0 && pct > 90;
-    lines.push(
-      [
-        escCsv(cc.agrupador),
-        escCsv(cc.nombreProyecto),
-        escCsv(cc.nombreCuenta),
-        escCsv(cc.descripcionServicio),
-        escCsv(inversionTotal),
-        escCsv(formatMoneyCc(used) || "$0"),
-        escCsv(formatMoneyCc(saldo) || "$0"),
-        escCsv(`${pct.toFixed(2)}%`),
-        escCsv(riesgo ? "RIESGO" : "OK")
-      ].join(",")
-    );
+  void showAppDialog({
+    message: "La exportación a CSV está deshabilitada. Los datos se consolidan en el servidor al publicar.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
   });
-  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `centro_de_costos_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 async function runDeleteCentroCostoFlowForId(ccId) {
@@ -1176,44 +1396,546 @@ function syncCentroCostosYConsumoDesdePlanning() {
   }
 }
 
-function persistPlanningData() {
+function shouldDeferDiskPersistence() {
+  return appDeferredDiskPersistence === true;
+}
+
+let draftNotifyRaf = null;
+
+function cancelPendingDraftNotify() {
+  if (draftNotifyRaf != null) {
+    cancelAnimationFrame(draftNotifyRaf);
+    draftNotifyRaf = null;
+  }
+}
+
+function withDraftNotificationsSuppressed(fn) {
+  appSuppressDraftNotifications += 1;
   try {
-    localStorage.setItem(LS_PLANNING_DATA, JSON.stringify({ records, recordIdSeq }));
-    localStorage.setItem("planning", JSON.stringify(records));
+    return fn();
+  } finally {
+    appSuppressDraftNotifications -= 1;
+  }
+}
+
+function notifyDraftChanged() {
+  if (!shouldDeferDiskPersistence()) return;
+  if (appSuppressDraftNotifications > 0) return;
+  if (draftNotifyRaf != null) return;
+  draftNotifyRaf = requestAnimationFrame(() => {
+    draftNotifyRaf = null;
+    if (appSuppressDraftNotifications > 0) return;
+    appPendingPublishCount += 1;
+    bumpAppStatePendingChanges();
+    updatePublishDraftToolbar();
+  });
+}
+
+function runWithDiskPersistenceEnabled(fn) {
+  const prev = appDeferredDiskPersistence;
+  appDeferredDiskPersistence = false;
+  try {
+    fn();
+  } finally {
+    appDeferredDiskPersistence = prev;
+  }
+}
+
+function buildMemorySnapshotForPublish() {
+  recomputePlanningMergedCacheFromRecords();
+  refreshTeamScopedDataCachesForSnapshot();
+  const planningSnap = JSON.parse(JSON.stringify(planningMergedRecordsCache && planningMergedRecordsCache.length ? planningMergedRecordsCache : records));
+  return {
+    planning_data: { records: planningSnap, recordIdSeq: getPlanningRecordIdSeq() },
+    cc_data: { centros: JSON.parse(JSON.stringify(centrosCostos)), seq: centroCostoIdSeq },
+    catalogos_sistema: JSON.parse(JSON.stringify(catalogosSistema)),
+    consumo_por_campaña: JSON.parse(JSON.stringify(mergeConsumoForPersist())),
+    programs: JSON.parse(JSON.stringify(programs)),
+    bitacora_data: JSON.parse(JSON.stringify(bitacoraData)),
+    data_general: serializeDataReal(dataRealMergedCache || dataReal),
+    data_ads_report: serializeDataReal(dataAdsReportMergedCache || dataAdsReport),
+    data_anuncios: serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios),
+    campaniasUnicasData: JSON.parse(JSON.stringify(campaniasUnicasMergedCache || campaniasUnicasData)),
+    relaciones: JSON.parse(JSON.stringify(relacionesMergedCache || relaciones)),
+    medidas: JSON.parse(JSON.stringify(medidasMergedCache || medidas)),
+    modelo: serializeModelo(modeloMergedCache || modeloAnalitico),
+    campatrack_users_db: JSON.parse(JSON.stringify(getCampatrackStoredUsers()))
+  };
+}
+
+function captureAppPublishBaseline() {
+  try {
+    appPublishSnapshotBaselineJson = JSON.stringify(buildMemorySnapshotForPublish());
   } catch (err) {
-    console.warn("No se pudo guardar planning_data", err);
+    console.warn("captureAppPublishBaseline", err);
+    appPublishSnapshotBaselineJson = null;
+  }
+}
+
+function applyMemorySnapshotFromBundle(snap) {
+  if (!snap || typeof snap !== "object") return;
+  if (snap.planning_data && Array.isArray(snap.planning_data.records)) {
+    const rows = snap.planning_data.records.map((r) => (typeof r === "object" && r ? { ...r } : r));
+    migratePlanningRowsTeamIds(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) {
+      planningMergedRecordsCache = rows;
+    } else {
+      const tid = getCurrentTeamId();
+      const base =
+        shouldDeferDiskPersistence() && Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
+          ? planningMergedRecordsCache.slice()
+          : readParsedPlanningPayloadFromDisk().rows;
+      planningMergedRecordsCache = mergeRowsByTeamId(base, rows, tid, normalizeRowTeamId);
+    }
+    if (Number.isFinite(Number(snap.planning_data.recordIdSeq)))
+      setPlanningRecordIdSeq(Math.max(1, Math.round(Number(snap.planning_data.recordIdSeq))));
+    reloadPlanningWorkingSliceFromCache();
+  }
+  if (snap.cc_data && Array.isArray(snap.cc_data.centros)) {
+    centrosCostos.length = 0;
+    snap.cc_data.centros.forEach((r) => centrosCostos.push(r));
+    if (Number.isFinite(Number(snap.cc_data.seq)))
+      centroCostoIdSeq = Math.max(1, Math.round(Number(snap.cc_data.seq)));
+  }
+  if (snap.catalogos_sistema && typeof snap.catalogos_sistema === "object") {
+    catalogosSistema = snap.catalogos_sistema;
+    ensureCatalogosSistemaShape();
+  }
+  if (snap.consumo_por_campaña && typeof snap.consumo_por_campaña === "object") {
+    Object.keys(consumoPorCampaña).forEach((k) => {
+      delete consumoPorCampaña[k];
+    });
+    Object.assign(consumoPorCampaña, snap.consumo_por_campaña);
+  }
+  if (Array.isArray(snap.programs)) {
+    programs.length = 0;
+    snap.programs.forEach((p) => programs.push(p));
+  }
+  if (Array.isArray(snap.bitacora_data)) {
+    bitacoraData.length = 0;
+    const rows = snap.bitacora_data.map((r) => normalizeBitacoraRow(r));
+    sortBitacoraRowsNewestFirst(rows);
+    rows.forEach((r) => bitacoraData.push(r));
+  }
+  if (snap.data_general) {
+    const rows = deserializeDataReal(snap.data_general);
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) dataRealMergedCache = rows;
+    else {
+      const base = Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk();
+      dataRealMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    dataReal = dataRealMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    dataRealMergedCache = [];
+    dataReal = [];
+  }
+  if (snap.data_ads_report) {
+    const rows = deserializeDataReal(snap.data_ads_report);
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) dataAdsReportMergedCache = rows;
+    else {
+      const base = Array.isArray(dataAdsReportMergedCache) && dataAdsReportMergedCache.length ? dataAdsReportMergedCache : readFullDataAdsRowsFromDisk();
+      dataAdsReportMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    dataAdsReport = dataAdsReportMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    dataAdsReportMergedCache = [];
+    dataAdsReport = [];
+  }
+  if (snap.data_anuncios) {
+    const rows = deserializeDataAnuncios(snap.data_anuncios);
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) dataAnunciosMergedCache = rows;
+    else {
+      const base = Array.isArray(dataAnunciosMergedCache) && dataAnunciosMergedCache.length ? dataAnunciosMergedCache : readFullDataAnunciosRowsFromDisk();
+      dataAnunciosMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    dataAnuncios = dataAnunciosMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    dataAnunciosMergedCache = [];
+    dataAnuncios = [];
+  }
+  if (Array.isArray(snap.campaniasUnicasData)) {
+    const rows = snap.campaniasUnicasData.map((r) => (typeof r === "object" && r ? { ...r } : r));
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) campaniasUnicasMergedCache = rows;
+    else {
+      const base =
+        Array.isArray(campaniasUnicasMergedCache) && campaniasUnicasMergedCache.length ? campaniasUnicasMergedCache : readFullCampaniasUnicasFromDisk();
+      campaniasUnicasMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    campaniasUnicasData = campaniasUnicasMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    campaniasUnicasMergedCache = [];
+    campaniasUnicasData = [];
+  }
+  if (Array.isArray(snap.relaciones)) {
+    const rows = snap.relaciones.map((r) => (typeof r === "object" && r ? { ...r } : r));
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) relacionesMergedCache = rows;
+    else {
+      const base = Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk();
+      relacionesMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    relaciones = relacionesMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    relacionesMergedCache = [];
+    relaciones = [];
+  }
+  normalizeRelacionesPlanningKeys();
+  if (Array.isArray(snap.medidas)) {
+    const rows = snap.medidas.map((r) => (typeof r === "object" && r ? { ...r } : r));
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) medidasMergedCache = rows;
+    else {
+      const base = Array.isArray(medidasMergedCache) && medidasMergedCache.length ? medidasMergedCache : readFullMedidasFromDisk();
+      medidasMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    medidas = medidasMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    medidasMergedCache = [];
+    medidas = [];
+  }
+  if (Array.isArray(snap.modelo)) {
+    const rows = deserializeModelo(snap.modelo);
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) modeloMergedCache = rows;
+    else {
+      const base = Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk();
+      modeloMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    }
+    modeloAnalitico = modeloMergedCache.filter(rowBelongsToCurrentTeam);
+  } else {
+    modeloMergedCache = [];
+    modeloAnalitico = [];
+  }
+  if (Array.isArray(snap.campatrack_users_db)) {
+    campatrackUsersDraft = snap.campatrack_users_db.map((u) => (u && typeof u === "object" ? { ...u } : u));
+    if (!shouldDeferDiskPersistence()) {
+      try {
+        appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(campatrackUsersDraft));
+      } catch (_) {}
+    }
+  }
+  const allRows = dataReal.concat(dataAdsReport, dataAnuncios);
+  dataIdSeq = Math.max(1, ...allRows.map((r) => Number(r._id) || 0)) + 1;
+  if (hasDataGeneralLoaded()) pruneRelacionesWithoutData();
+  selectedRecordId = null;
+  selectedCcRowId = null;
+}
+
+function flushAllPersistedStateToDisk() {
+  runWithDiskPersistenceEnabled(() => {
+    try {
+      recomputePlanningMergedCacheFromRecords();
+      const mergedPlan = planningMergedRecordsCache || records.slice();
+      writePlanningPayloadToLocalStorage(mergedPlan, getPlanningRecordIdSeq());
+    } catch (err) {
+      console.warn("flush planning", err);
+    }
+    try {
+      appMemoryKV.setItem(LS_CONSUMO_CAMPANA, JSON.stringify(mergeConsumoForPersist()));
+    } catch (err) {
+      console.warn("flush consumo", err);
+    }
+    try {
+      appMemoryKV.setItem(LS_CC_DATA, JSON.stringify({ centros: centrosCostos, seq: centroCostoIdSeq }));
+      appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
+    } catch (err) {
+      console.warn("flush cc", err);
+    }
+    saveCatalogosSistema();
+    try {
+      appMemoryKV.setItem(LS_BITACORA_DATA, JSON.stringify(bitacoraData));
+    } catch (err) {
+      console.warn("flush bitácora", err);
+    }
+    refreshTeamScopedDataCachesForSnapshot();
+    guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataRealMergedCache || dataReal));
+    guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache || dataAdsReport));
+    guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios));
+    guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache || campaniasUnicasData);
+    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache || relaciones);
+    guardarEnLocalStorage(LS_KEYS.medidas, medidasMergedCache || medidas);
+    guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache || modeloAnalitico));
+    guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache || modeloAnalitico));
+    try {
+      appMemoryKV.setItem("programas", JSON.stringify(programs));
+    } catch (err) {
+      console.warn("flush programas", err);
+    }
+    try {
+      hydrateCampatrackUsersDraftFromLocalStorageIfNeeded();
+      appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(Array.isArray(campatrackUsersDraft) ? campatrackUsersDraft : []));
+    } catch (err) {
+      console.warn("flush usuarios", err);
+    }
+    guardarTodo({ incluirTablasData: true });
+  });
+  void persistPublishedBundleToBackend();
+}
+
+function refreshTodosModulosTrasBorradorOPublicar() {
+  syncCentroCostosYConsumoDesdePlanning();
+  rebuildPlanningTable();
+  refreshCentroCostosUI();
+  renderCcKpiStrip();
+  renderBitacoraTipoSelect();
+  renderBitacoraTable();
+  renderTablaData();
+  renderTablaAnuncios();
+  renderTablaCampañas();
+  refreshAdsReportFilterOptions();
+  renderAdsReportModule();
+  try {
+    renderRelacionesPlanningList();
+    renderRelacionesDataList();
+    renderRelacionesTabla();
+    renderRelacionesEstado();
+  } catch (_) {}
+  REGENERAR_MODELO();
+  if (Array.isArray(modeloAnalitico) && modeloAnalitico.length > 0) {
+    renderModeloTabla();
+    refreshSegmentadoresValues();
+    refreshMedidasFiltros();
+  }
+  renderMedidasTabla();
+  if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+    try {
+      window.campatrackRefreshUsersListIfVisible();
+    } catch (_) {}
+  }
+  if (dashboardUiInicializado) {
+    try {
+      renderDashboardFromFilters();
+    } catch (_) {}
+  }
+  if (!document.getElementById("dashboardModule")?.classList.contains("hidden")) {
+    try {
+      renderDashboard();
+    } catch (_) {}
+  }
+  updateFilterProgramaState();
+  syncCatalogosSistemaDesdeMemoria();
+  refreshPlanningCatalogUi();
+  updateTotalInversion();
+  updateActionButtons();
+  actualizarFiltrosCache();
+}
+
+function updatePublishDraftToolbar() {
+  const pub = document.getElementById("appDraftPublishBtn");
+  const dis = document.getElementById("appDraftDiscardBtn");
+  const n = appPendingPublishCount;
+  if (pub) {
+    pub.disabled = n === 0 || appPublishModalBusy;
+    pub.setAttribute("aria-disabled", pub.disabled ? "true" : "false");
+    pub.classList.toggle("app-draft-btn--publish-active", n > 0 && !pub.disabled);
+    const countLabel = n > 99 ? "99+" : String(Math.max(0, n));
+    const countHtml =
+      n > 0
+        ? `<span class="app-draft-publish-count" aria-hidden="true"> (${countLabel})</span>`
+        : "";
+    pub.innerHTML = `<span class="app-draft-publish-label">Revisar y publicar</span>${countHtml}`;
+    pub.setAttribute("aria-label", n > 0 ? `Revisar y publicar, ${countLabel} cambios pendientes` : "Revisar y publicar (sin cambios)");
+  }
+  if (dis) {
+    dis.disabled = n === 0 || appPublishModalBusy;
+    dis.setAttribute("aria-disabled", dis.disabled ? "true" : "false");
+  }
+}
+
+function setPublishModalPhase(phase) {
+  const overlay = document.getElementById("appPublishModalOverlay");
+  const progressPhase = document.getElementById("appPublishModalPhaseProgress");
+  const donePhase = document.getElementById("appPublishModalPhaseDone");
+  if (!overlay || !progressPhase || !donePhase) return;
+  const showProg = phase === "progress";
+  progressPhase.classList.toggle("hidden", !showProg);
+  donePhase.classList.toggle("hidden", showProg);
+  overlay.setAttribute("data-phase", phase);
+}
+
+function openPublishModal() {
+  const overlay = document.getElementById("appPublishModalOverlay");
+  const bar = document.getElementById("appPublishProgressBar");
+  if (!overlay || !bar) return;
+  bar.style.width = "0%";
+  setPublishModalPhase("progress");
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+}
+
+function closePublishModal() {
+  const overlay = document.getElementById("appPublishModalOverlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+  setPublishModalPhase("progress");
+}
+
+async function runPublishFlowWithModal() {
+  if (appPublishModalBusy || appPendingPublishCount === 0) return;
+  const overlayCheck = document.getElementById("appPublishModalOverlay");
+  const barCheck = document.getElementById("appPublishProgressBar");
+  if (!overlayCheck || !barCheck) {
+    try {
+      flushAllPersistedStateToDisk();
+    } catch (err) {
+      console.warn("Publicar sin modal", err);
+    }
+    cancelPendingDraftNotify();
+    captureAppPublishBaseline();
+    appPendingPublishCount = 0;
+    resetAppStatePendingChanges();
+    updatePublishDraftToolbar();
+    return;
+  }
+  appPublishModalBusy = true;
+  updatePublishDraftToolbar();
+  openPublishModal();
+  const bar = barCheck;
+  let progress = 0;
+  let flushDone = false;
+  const runFlush = () => {
+    if (flushDone) return;
+    flushDone = true;
+    try {
+      flushAllPersistedStateToDisk();
+    } catch (err) {
+      console.warn("Publicar: error al guardar", err);
+    }
+  };
+  await new Promise((resolve) => {
+    const iv = setInterval(() => {
+      progress = Math.min(100, progress + 2);
+      if (bar) bar.style.width = `${progress}%`;
+      if (progress >= 10 && progress < 12) runFlush();
+      if (progress >= 100) {
+        clearInterval(iv);
+        runFlush();
+        resolve();
+      }
+    }, 100);
+  });
+  cancelPendingDraftNotify();
+  captureAppPublishBaseline();
+  appPendingPublishCount = 0;
+  resetAppStatePendingChanges();
+  setPublishModalPhase("done");
+  updatePublishDraftToolbar();
+  await new Promise((r) => setTimeout(r, 1500));
+  closePublishModal();
+  appPublishModalBusy = false;
+  updatePublishDraftToolbar();
+}
+
+async function confirmDiscardDraftChanges() {
+  if (appPendingPublishCount === 0 || appPublishModalBusy) return;
+  const ok = await showAppDialog({
+    message: "¿Descartar todos los cambios no publicados? Se restaurará el último estado guardado.",
+    primaryText: "Descartar",
+    secondaryText: "Cancelar",
+    showSecondary: true,
+    primaryDanger: true
+  });
+  if (!ok) return;
+  if (!appPublishSnapshotBaselineJson) {
+    cancelPendingDraftNotify();
+    captureAppPublishBaseline();
+    appPendingPublishCount = 0;
+    resetAppStatePendingChanges();
+    updatePublishDraftToolbar();
+    return;
+  }
+  try {
+    applyMemorySnapshotFromBundle(JSON.parse(appPublishSnapshotBaselineJson));
+  } catch (err) {
+    console.warn("Descartar borrador", err);
+    await showAppDialog({
+      message: "No se pudo restaurar el estado. Intenta recargar la página.",
+      primaryText: "Entendido",
+      showSecondary: false,
+      primaryDanger: false
+    });
+    return;
+  }
+  cancelPendingDraftNotify();
+  appPendingPublishCount = 0;
+  resetAppStatePendingChanges();
+  updatePublishDraftToolbar();
+  withDraftNotificationsSuppressed(() => {
+    refreshTodosModulosTrasBorradorOPublicar();
+  });
+  updatePublishDraftToolbar();
+}
+
+function initDraftPublishToolbar() {
+  const pub = document.getElementById("appDraftPublishBtn");
+  const dis = document.getElementById("appDraftDiscardBtn");
+  pub?.addEventListener("click", () => {
+    void runPublishFlowWithModal();
+  });
+  dis?.addEventListener("click", () => {
+    void confirmDiscardDraftChanges();
+  });
+  updatePublishDraftToolbar();
+}
+
+function persistPlanningData() {
+  recomputePlanningMergedCacheFromRecords();
+  const merged = planningMergedRecordsCache || records.slice();
+  const maxMergedId = merged.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
+  if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
+    setPlanningRecordIdSeq(Math.max(Math.max(1, Math.round(Number(getPlanningRecordIdSeq()))), maxMergedId + 1));
+  } else if (maxMergedId) {
+    setPlanningRecordIdSeq(maxMergedId + 1);
+  }
+  if (!shouldDeferDiskPersistence()) {
+    try {
+      writePlanningPayloadToLocalStorage(merged, getPlanningRecordIdSeq());
+    } catch (err) {
+      console.warn("No se pudo guardar planning_data", err);
+    }
+  } else {
+    notifyDraftChanged();
   }
   syncCentroCostosYConsumoDesdePlanning();
   REGENERAR_MODELO();
-  guardarTodo({ incluirTablasData: false });
+  if (!shouldDeferDiskPersistence()) {
+    guardarTodo({ incluirTablasData: false });
+    guardarDebounce();
+  }
   syncCatalogosSistemaDesdeMemoria();
   refreshPlanningCatalogUi();
-  guardarDebounce();
 }
 
 function hydratarPlanningData() {
   try {
-    const raw = localStorage.getItem("planning") || localStorage.getItem(LS_PLANNING_DATA) || localStorage.getItem("planningData");
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    if (Array.isArray(data)) {
-      records.length = 0;
-      data.forEach((r) => records.push(r));
-      const maxId = records.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
-      if (maxId) recordIdSeq = maxId + 1;
-      return ensurePlanningRecordsHaveStableUniqueIds();
+    const parsed = readParsedPlanningPayloadFromDisk();
+    const allRows = parsed.rows.slice();
+    const teamMigrated = migratePlanningRowsTeamIds(allRows);
+    const idsChanged = ensurePlanningArrayStableUniqueIds(allRows);
+    const maxAll = allRows.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
+    if (Number.isFinite(Number(parsed.recordIdSeq))) {
+      setPlanningRecordIdSeq(Math.max(Math.max(1, Math.round(Number(parsed.recordIdSeq))), maxAll + 1));
+    } else if (maxAll) {
+      setPlanningRecordIdSeq(maxAll + 1);
+    } else {
+      setPlanningRecordIdSeq(Math.max(1, Number(getPlanningRecordIdSeq()) || 1));
     }
-    if (data && typeof data === "object" && Array.isArray(data.records)) {
-      records.length = 0;
-      data.records.forEach((r) => records.push(r));
-      const maxId = records.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
-      if (Number.isFinite(Number(data.recordIdSeq))) {
-        recordIdSeq = Math.max(Math.max(1, Number(data.recordIdSeq)), maxId + 1);
-      } else if (maxId) {
-        recordIdSeq = maxId + 1;
-      }
-      return ensurePlanningRecordsHaveStableUniqueIds();
-    }
+    planningMergedRecordsCache = allRows;
+    reloadPlanningWorkingSliceFromCache();
+    return idsChanged || teamMigrated;
   } catch (err) {
     console.warn("No se pudo cargar planning_data", err);
   }
@@ -1242,7 +1964,7 @@ function loadCatalogosSistemaFromStorage() {
   catalogosSistema = { tipos: [], programas: [], tracking: [], plataformas: [], intakes: [] };
   ensureCatalogosSistemaShape();
   try {
-    const raw = localStorage.getItem(LS_CATALOGOS_SISTEMA);
+    const raw = appMemoryKV.getItem(LS_CATALOGOS_SISTEMA);
     if (!raw) return;
     const data = JSON.parse(raw);
     if (!data || typeof data !== "object") return;
@@ -1258,10 +1980,14 @@ function loadCatalogosSistemaFromStorage() {
 
 function saveCatalogosSistema() {
   ensureCatalogosSistemaShape();
-  try {
-    localStorage.setItem(LS_CATALOGOS_SISTEMA, JSON.stringify(catalogosSistema));
-  } catch (err) {
-    console.warn("No se pudo guardar catalogos_sistema", err);
+  if (!shouldDeferDiskPersistence()) {
+    try {
+      appMemoryKV.setItem(LS_CATALOGOS_SISTEMA, JSON.stringify(catalogosSistema));
+    } catch (err) {
+      console.warn("No se pudo guardar catalogos_sistema", err);
+    }
+  } else {
+    notifyDraftChanged();
   }
 }
 
@@ -1968,11 +2694,25 @@ function applyPlanningLeadsTotalFromCell(record, rawText) {
   }
 }
 
+function setPlanningMonthlyInvFromCell(record, monthIdx, rawText) {
+  materializeDistribucionPreservingComputed(record);
+  const key = DIST_MES_KEYS[monthIdx];
+  const v = String(rawText ?? "").trim();
+  const num = v === "" ? 0 : Math.max(0, Number(v));
+  const invVal = Number.isFinite(num) ? num : 0;
+  if (!record.distribucionMensual[key] || typeof record.distribucionMensual[key] !== "object")
+    record.distribucionMensual[key] = { presupuesto: 0, leads: 0 };
+  record.distribucionMensual[key].presupuesto = invVal;
+  syncRecordBudgetTotalsFromComputedMonths(record);
+}
+
 function setPlanningMonthlyLeadFromCell(record, monthIdx, rawText) {
   materializeDistribucionPreservingComputed(record);
   const key = DIST_MES_KEYS[monthIdx];
   const leadsVal = Math.max(0, Math.round(Number(String(rawText ?? "").replace(/\D/g, "")) || 0));
-  if (record.distribucionMensual[key]) record.distribucionMensual[key].leads = leadsVal;
+  if (!record.distribucionMensual[key] || typeof record.distribucionMensual[key] !== "object")
+    record.distribucionMensual[key] = { presupuesto: 0, leads: 0 };
+  record.distribucionMensual[key].leads = leadsVal;
   syncRecordBudgetTotalsFromComputedMonths(record);
 }
 
@@ -1984,7 +2724,9 @@ function setPlanningMonthlyCplFromCell(record, monthIdx, rawText) {
   const cpl = Math.max(0, Number(String(rawText ?? "").replace(/[$,\s]/g, "")) || 0);
   const leads = cpl > 0 ? Math.max(0, Math.round(inv / cpl)) : 0;
   const key = DIST_MES_KEYS[monthIdx];
-  if (record.distribucionMensual[key]) record.distribucionMensual[key].leads = leads;
+  if (!record.distribucionMensual[key] || typeof record.distribucionMensual[key] !== "object")
+    record.distribucionMensual[key] = { presupuesto: 0, leads: 0 };
+  record.distribucionMensual[key].leads = leads;
   syncRecordBudgetTotalsFromComputedMonths(record);
 }
 
@@ -2199,6 +2941,23 @@ function rebuildPlanningTable() {
     if (samePlanningRecordId(record.id, selectedRecordId)) row.classList.add("row-selected");
     planningBody.appendChild(row);
   });
+  updateTotalInversion();
+  updateActionButtons();
+}
+
+/** Sustituye una sola fila del planning (evita re-render completo tras edición en celda). */
+function replacePlanningRowElement(record) {
+  if (!planningBody || !record) return;
+  const oldRow = [...planningBody.querySelectorAll("tr[data-record-id]")].find((tr) =>
+    samePlanningRecordId(tr.getAttribute("data-record-id"), record.id)
+  );
+  if (!oldRow) {
+    rebuildPlanningTable();
+    return;
+  }
+  const newRow = buildRecordRow(record);
+  if (samePlanningRecordId(record.id, selectedRecordId)) newRow.classList.add("row-selected");
+  oldRow.replaceWith(newRow);
   updateTotalInversion();
   updateActionButtons();
 }
@@ -3318,6 +4077,7 @@ campaignForm?.addEventListener("submit", (event) => {
       const prevMetas = prev.metas;
       records[idx] = {
         ...prev,
+        teamId: getCurrentTeamId(),
         tipo: candidate.tipo,
         programa: candidate.programa,
         intake: candidate.intake,
@@ -3341,6 +4101,7 @@ campaignForm?.addEventListener("submit", (event) => {
     } else {
       const newRecord = {
         id: newPlanningRecordId(),
+        teamId: getCurrentTeamId(),
         tipo: candidate.tipo,
         programa: candidate.programa,
         intake: candidate.intake,
@@ -3604,12 +4365,14 @@ planningBody?.addEventListener("dblclick", (event) => {
   const record = records.find((r) => samePlanningRecordId(r.id, recordIdRaw));
   if (!record) return;
 
-  const bindNumericCommit = (input, apply) => {
+  const bindNumericCommit = (input, apply, opts = {}) => {
+    const rowRefreshRecord = opts.planningRowRefreshRecord;
     let aborted = false;
     const commit = () => {
       if (aborted) return;
       apply(input.value);
-      rebuildPlanningTable();
+      if (rowRefreshRecord) replacePlanningRowElement(rowRefreshRecord);
+      else rebuildPlanningTable();
       persistPlanningData();
     };
     input.addEventListener("blur", commit, { once: true });
@@ -3639,12 +4402,8 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => {
-      const v = String(raw ?? "").trim();
-      const num = v === "" ? null : Math.max(0, Number(v));
-      if (!record.monthlyInvOverride) record.monthlyInvOverride = Array.from({ length: 12 }, () => null);
-      record.monthlyInvOverride[monthIdx] = num === null || !Number.isFinite(num) ? null : num;
-      syncRecordBudgetTotalsFromComputedMonths(record);
+    bindNumericCommit(input, (raw) => setPlanningMonthlyInvFromCell(record, monthIdx, raw), {
+      planningRowRefreshRecord: record
     });
     return;
   }
@@ -3662,7 +4421,9 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => setPlanningMonthlyLeadFromCell(record, monthIdx, raw));
+    bindNumericCommit(input, (raw) => setPlanningMonthlyLeadFromCell(record, monthIdx, raw), {
+      planningRowRefreshRecord: record
+    });
     return;
   }
 
@@ -3679,7 +4440,9 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => setPlanningMonthlyCplFromCell(record, monthIdx, raw));
+    bindNumericCommit(input, (raw) => setPlanningMonthlyCplFromCell(record, monthIdx, raw), {
+      planningRowRefreshRecord: record
+    });
     return;
   }
 
@@ -3695,11 +4458,15 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => {
-      if (!record.metas) record.metas = {};
-      const nextValue = String(raw ?? "").trim();
-      record.metas[metaKey] = nextValue === "" ? "" : Number(nextValue);
-    });
+    bindNumericCommit(
+      input,
+      (raw) => {
+        if (!record.metas) record.metas = {};
+        const nextValue = String(raw ?? "").trim();
+        record.metas[metaKey] = nextValue === "" ? "" : Number(nextValue);
+      },
+      { planningRowRefreshRecord: record }
+    );
     return;
   }
 
@@ -3751,10 +4518,14 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => {
-      if (field === "presupuesto") applyPlanningPresupuestoTotalFromCell(record, raw);
-      else applyPlanningLeadsTotalFromCell(record, raw);
-    });
+    bindNumericCommit(
+      input,
+      (raw) => {
+        if (field === "presupuesto") applyPlanningPresupuestoTotalFromCell(record, raw);
+        else applyPlanningLeadsTotalFromCell(record, raw);
+      },
+      { planningRowRefreshRecord: record }
+    );
     return;
   }
 
@@ -3847,20 +4618,24 @@ function sortBitacoraRowsNewestFirst(rows) {
 }
 
 function persistBitacoraData() {
-  try {
-    localStorage.setItem(LS_BITACORA_DATA, JSON.stringify(bitacoraData));
-  } catch (err) {
-    console.warn("No se pudo guardar bitacora_data", err);
+  if (!shouldDeferDiskPersistence()) {
+    try {
+      appMemoryKV.setItem(LS_BITACORA_DATA, JSON.stringify(bitacoraData));
+    } catch (err) {
+      console.warn("No se pudo guardar bitacora_data", err);
+    }
+    guardarDebounce();
+  } else {
+    notifyDraftChanged();
   }
   syncCatalogosSistemaDesdeMemoria();
   refreshPlanningCatalogUi();
-  guardarDebounce();
 }
 
 function hydratarBitacoraData() {
   bitacoraData.length = 0;
   try {
-    const raw = localStorage.getItem(LS_BITACORA_DATA);
+    const raw = appMemoryKV.getItem(LS_BITACORA_DATA);
     if (!raw) return;
     const data = JSON.parse(raw);
     if (!Array.isArray(data)) return;
@@ -4568,7 +5343,7 @@ let incluirBrandingDashboard = false;
 const LS_DASH_MOSTRAR_META_GLOBAL = "dashboard_mostrar_meta_global";
 let mostrarMetaGlobal = true;
 try {
-  const rawMostrarMetaGlobal = localStorage.getItem(LS_DASH_MOSTRAR_META_GLOBAL);
+  const rawMostrarMetaGlobal = appMemoryKV.getItem(LS_DASH_MOSTRAR_META_GLOBAL);
   if (rawMostrarMetaGlobal === "false") mostrarMetaGlobal = false;
 } catch (err) {
   console.warn("No se pudo leer estado de columnas META GLOBAL", err);
@@ -4600,8 +5375,9 @@ const ADS_REPORT_ORIGINAL_MAX_BYTES = 350 * 1024;
 const ADS_REPORT_PREVIEW_HOVER_DELAY_MS = 3000;
 
 function guardarEnLocalStorage(clave, data) {
+  if (shouldDeferDiskPersistence()) return;
   try {
-    localStorage.setItem(clave, JSON.stringify(data));
+    appMemoryKV.setItem(clave, JSON.stringify(data));
   } catch (err) {
     console.warn("No se pudo guardar en localStorage:", clave, err);
   }
@@ -4609,7 +5385,7 @@ function guardarEnLocalStorage(clave, data) {
 
 function cargarDesdeLocalStorage(clave) {
   try {
-    const raw = localStorage.getItem(clave);
+    const raw = appMemoryKV.getItem(clave);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch (err) {
@@ -4622,7 +5398,7 @@ function resetearSistemaCompleto() {
   showResetSystemKeyDialog().then((ok) => {
     if (!ok) return;
     try {
-      localStorage.clear();
+      appMemoryKV.clear();
     } catch (err) {
       console.warn("No se pudo limpiar localStorage", err);
     }
@@ -4798,7 +5574,7 @@ function limpiarDataSeleccionada(selection) {
   } catch {}
 }
 
-/** Solo tablas DATA seleccionadas en memoria y localStorage. No modifica planning ni centros de costos. */
+/** Solo tablas DATA seleccionadas en memoria y appMemoryKV. No modifica planning ni centros de costos. */
 function limpiarSoloModuloData() {
   showDataClearSelectionDialog().then((selection) => {
     if (!selection) return;
@@ -4815,7 +5591,8 @@ const EXPORT_BUNDLE_KEYS = [
   "data_ads_report",
   "data_anuncios",
   "relaciones",
-  "campatrack_users_db"
+  "campatrack_users_db",
+  "campatrack_teams_db"
 ];
 
 /** Estado adicional que el dashboard hidrata / persiste fuera del JSON mínimo de export. */
@@ -4853,6 +5630,7 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
     campatrack_users_db: getCampatrackStoredUsers(),
+    campatrack_teams_db: getCampatrackStoredTeams(),
     campaniasUnicasData: leerJsonLocalStorage(LS_KEYS.campaniasUnicasData),
     medidas: leerJsonLocalStorage(LS_KEYS.medidas),
     modeloAnalitico:
@@ -4878,6 +5656,28 @@ function obtenerDataCompletaRealParaAPI(payload) {
   return out;
 }
 
+const CAMPATRACK_API_ORIGIN =
+  typeof window !== "undefined" && window.CAMPATRACK_API_ORIGIN
+    ? String(window.CAMPATRACK_API_ORIGIN).replace(/\/$/, "")
+    : "http://localhost:3000";
+
+async function persistPublishedBundleToBackend() {
+  try {
+    if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) return;
+    recomputePlanningMergedCacheFromRecords();
+    const mergedPlan = planningMergedRecordsCache || records.slice();
+    const base = obtenerDataCompletaRealParaAPI();
+    const data = {
+      ...base,
+      ...appState.dataDraft,
+      planning_data: { records: mergedPlan, recordIdSeq: getPlanningRecordIdSeq() }
+    };
+    await guardarDataEnAPI(data);
+  } catch (e) {
+    console.warn("persistPublishedBundleToBackend", e);
+  }
+}
+
 async function guardarDataEnAPI(dataCompletaReal) {
   console.log("DATA ENVIADA:", dataCompletaReal);
 
@@ -4892,25 +5692,27 @@ async function guardarDataEnAPI(dataCompletaReal) {
   }
 
   try {
-    // 🔥 Obtener usuario logueado
-    const user = JSON.parse(sessionStorage.getItem("user"));
+    const rawSes = appMemorySession.getItem(SS_USER_SESSION_JSON);
+    const user = rawSes ? JSON.parse(rawSes) : null;
 
     if (!user || !user.username) {
       console.error("No hay usuario en sesión");
       return;
     }
 
-    const res = await fetch("http://localhost:3000/api/data", {
+    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/save-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: user.username, // 🔥 AQUÍ ESTÁ EL CAMBIO
+        user_id: user.username,
         data: dataCompletaReal
       })
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+    syncDataOriginalFromPublishedDraft();
+    applyPlanningOriginalFromDraft();
     console.log("Data guardada correctamente para:", user.username);
   } catch (_err) {
     console.error("Error guardando data en API");
@@ -4925,20 +5727,11 @@ function ejecutarGuardadoApiTrasImportacionExitosa(payload) {
 let guardarApiAutoTimer = null;
 function guardarDebounce() {
   if (guardarApiAutoTimer != null) clearTimeout(guardarApiAutoTimer);
-  guardarApiAutoTimer = setTimeout(() => {
-    guardarApiAutoTimer = null;
-    try {
-      if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) return;
-    } catch (_) {
-      return;
-    }
-    const data = obtenerDataCompletaRealParaAPI();
-    guardarDataEnApiCadena = guardarDataEnApiCadena.then(() => guardarDataEnAPI(data));
-  }, 1000);
+  guardarApiAutoTimer = null;
 }
 
 function leerJsonLocalStorage(clave, claveLegacy) {
-  const raw = localStorage.getItem(clave) || (claveLegacy ? localStorage.getItem(claveLegacy) : null);
+  const raw = appMemoryKV.getItem(clave) || (claveLegacy ? appMemoryKV.getItem(claveLegacy) : null);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -4949,132 +5742,23 @@ function leerJsonLocalStorage(clave, claveLegacy) {
 }
 
 function exportarDatosSistema() {
-  try {
-    persistCentrosCostos();
-    persistPlanningData();
-    persistDataState();
-    persistRelacionesState();
-  } catch (err) {
-    console.warn("Persistencia previa a exportar", err);
-  }
-  const payload = {
-    cc_data: leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
-    planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
-    catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
-    data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
-    data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
-    data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
-    relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
-    campatrack_users_db: getCampatrackStoredUsers()
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const fname = `marketing-planner-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
-  a.href = url;
-  a.download = fname;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  void showAppDialog({
+    message:
+      "La exportación a archivo JSON está deshabilitada. Los datos se guardan en el servidor al pulsar Publicar.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
-/** Descarga `data.json` con el mismo bundle que exportar (incluye usuarios). Para guardar tras alta de usuario. */
-function campatrackDownloadDataJsonBundle() {
-  try {
-    persistCentrosCostos();
-    persistPlanningData();
-    persistDataState();
-    persistRelacionesState();
-  } catch (err) {
-    console.warn("Persistencia previa a data.json", err);
-  }
-  const payload = {
-    cc_data: leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
-    planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
-    catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
-    data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
-    data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
-    data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
-    relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
-    campatrack_users_db: getCampatrackStoredUsers()
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "data.json";
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function importarDatosSistemaDesdeArchivo(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    void (async () => {
-      try {
-        const text = String(reader.result || "");
-        const payload = JSON.parse(text);
-        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-          await showAppDialog({
-            message: "El archivo no contiene un objeto JSON válido.",
-            primaryText: "Entendido",
-            showSecondary: false,
-            primaryDanger: false
-          });
-          return;
-        }
-        const ok = await showAppDialog({
-          message: "Se reemplazará toda la data actual. ¿Deseas continuar?",
-          primaryText: "Continuar",
-          secondaryText: "Cancelar",
-          showSecondary: true,
-          primaryDanger: true
-        });
-        if (!ok) return;
-        try {
-          localStorage.clear();
-        } catch (err) {
-          console.warn("No se pudo limpiar localStorage", err);
-        }
-        for (const clave of EXPORT_BUNDLE_KEYS) {
-          if (!Object.prototype.hasOwnProperty.call(payload, clave)) continue;
-          const v = payload[clave];
-          if (v === null || v === undefined) continue;
-          try {
-            localStorage.setItem(clave, JSON.stringify(v));
-          } catch (err) {
-            console.warn("No se pudo guardar en localStorage:", clave, err);
-          }
-        }
-        void ejecutarGuardadoApiTrasImportacionExitosa(payload);
-        mostrarModalPostImportacion();
-      } catch (err) {
-        console.warn(err);
-        await showAppDialog({
-          message: "No se pudo importar el archivo. Comprueba que sea JSON válido.",
-          primaryText: "Entendido",
-          showSecondary: false,
-          primaryDanger: false
-        });
-      }
-    })();
-  };
-  reader.onerror = () => {
-    void showAppDialog({
-      message: "No se pudo leer el archivo.",
-      primaryText: "Entendido",
-      showSecondary: false,
-      primaryDanger: false
-    });
-  };
-  reader.readAsText(file, "utf-8");
+function importarDatosSistemaDesdeArchivo(_file) {
+  void showAppDialog({
+    message:
+      "La importación desde archivo está deshabilitada. Usa «Importar desde API» o inicia sesión para cargar la data del servidor.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
 function mostrarModalPostImportacion() {
@@ -5140,11 +5824,20 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
   try {
     let userRaw;
     try {
-      userRaw = sessionStorage.getItem("user");
+      userRaw = appMemorySession.getItem(SS_USER_SESSION_JSON);
     } catch (_) {
       userRaw = null;
     }
-    const user = userRaw ? JSON.parse(userRaw) : null;
+    let user = userRaw ? JSON.parse(userRaw) : null;
+    if ((!user || !user.username) && aplicarYLuegoRecargar) {
+      restaurarCampatrackSessionDesdeBrowserStorage();
+      try {
+        userRaw = appMemorySession.getItem(SS_USER_SESSION_JSON);
+      } catch (_) {
+        userRaw = null;
+      }
+      user = userRaw ? JSON.parse(userRaw) : null;
+    }
 
     if (!user || !user.username) {
       if (!aplicarYLuegoRecargar) {
@@ -5156,7 +5849,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
     }
 
     const res = await fetch(
-      `http://localhost:3000/api/data?user_id=${encodeURIComponent(String(user.username))}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(String(user.username))}`
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -5169,6 +5862,17 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
 
     if (!response || typeof response !== "object" || response.data == null) {
       console.log("Sin data para este usuario");
+      if (aplicarYLuegoRecargar) {
+        persistCampatrackSessionToBrowserStorage();
+        void showAppDialog({
+          message:
+            "No hay datos guardados en el servidor para este usuario. La sesión permanece activa; puedes trabajar con datos vacíos o publicar más adelante.",
+          primaryText: "Entendido",
+          showSecondary: false,
+          primaryDanger: false
+        });
+        return "";
+      }
       recargarSiPostLogin();
       return "";
     }
@@ -5186,8 +5890,25 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
 
     console.log("DATA API:", dataReal);
 
+    try {
+      await initAppState({ userId: String(user.username), prefetchedBundle: dataReal });
+    } catch (e) {
+      console.warn("initAppState(prefetchedBundle)", e);
+    }
+
     if (!bundleTieneDatosUtiles(dataReal)) {
       console.log("Sin datos de bundle para aplicar para este usuario");
+      if (aplicarYLuegoRecargar) {
+        persistCampatrackSessionToBrowserStorage();
+        void showAppDialog({
+          message:
+            "La API devolvió datos sin claves reconocidas. No se recargará la página; tu sesión sigue activa.",
+          primaryText: "Entendido",
+          showSecondary: false,
+          primaryDanger: false
+        });
+        return "";
+      }
       recargarSiPostLogin();
       return "";
     }
@@ -5195,15 +5916,15 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
     if (!aplicarYLuegoRecargar) return JSON.stringify(dataReal);
 
     try {
-      localStorage.clear();
+      appMemoryKV.clear();
     } catch (_) {}
     try {
       const u = getUser();
       if (u && String(u.username ?? "").trim()) {
-        localStorage.setItem(LS_CAMPATRACK_AUTH, "true");
-        localStorage.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
-        localStorage.setItem(LS_CAMPATRACK_USER, String(u.username));
-        sessionStorage.setItem(SS_USUARIO_LOGUEADO, "true");
+        appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
+        appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
+        appMemoryKV.setItem(LS_CAMPATRACK_USER, String(u.username));
+        appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
       }
     } catch (_) {}
 
@@ -5212,18 +5933,27 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false) {
       const v = dataReal[clave];
       if (v == null || v === undefined) continue;
       try {
-        localStorage.setItem(clave, JSON.stringify(v));
+        appMemoryKV.setItem(clave, JSON.stringify(v));
       } catch (err) {
-        console.warn("No se pudo guardar en localStorage:", clave, err);
+        console.warn("No se pudo guardar en almacén en memoria:", clave, err);
       }
     }
-    void ejecutarGuardadoApiTrasImportacionExitosa(dataReal);
+    try {
+      syncDataOriginalFromPublishedDraft();
+    } catch (_) {}
+    persistCampatrackSessionToBrowserStorage();
     window.location.reload();
     return "";
   } catch (err) {
     console.error("Error cargando data API", err);
     if (aplicarYLuegoRecargar) {
-      window.location.reload();
+      persistCampatrackSessionToBrowserStorage();
+      void showAppDialog({
+        message: String(err?.message || "No se pudo cargar la data desde la API. La sesión permanece activa."),
+        primaryText: "Entendido",
+        showSecondary: false,
+        primaryDanger: false
+      });
       return "";
     }
     throw err;
@@ -5246,22 +5976,11 @@ function initExportImportDatos() {
   });
   importUrlBtn?.addEventListener("click", async () => {
     try {
-      const dataString = await cargarDataDesdeAPI();
-      const file = new File([dataString], "data.json", { type: "application/json" });
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-
-      if (fileInput instanceof HTMLInputElement) {
-        fileInput.files = dataTransfer.files;
-        fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-        console.log("Importación correcta usando flujo original");
-      } else {
-        console.error("No se encontró input file");
-      }
+      await cargarDataDesdeAPI(true);
     } catch (err) {
-      console.error("Error cargando data desde API");
+      console.error("Error cargando data desde API", err);
       void showAppDialog({
-        message: "No se pudo cargar la data desde la API local.",
+        message: "No se pudo cargar la data desde la API.",
         primaryText: "Entendido",
         showSecondary: false,
         primaryDanger: false
@@ -5364,7 +6083,8 @@ function dataAnunciosUpsertKey(r) {
 function mergeDataAnuncioPreservingId(existing, incoming) {
   const id = existing._id;
   const { fecha: _omitFecha, ...prev } = existing || {};
-  return { ...prev, ...incoming, _id: id };
+  const teamKeep = normalizeRowTeamId(incoming) !== TEAM_GENERAL_ID ? normalizeRowTeamId(incoming) : normalizeRowTeamId(existing);
+  return { ...prev, ...incoming, _id: id, teamId: teamKeep || getCurrentTeamId() };
 }
 
 /**
@@ -5389,10 +6109,11 @@ function upsertDataAnunciosLote(newRows, dataActual) {
       result[idx] = mergeDataAnuncioPreservingId(result[idx], incoming);
       actualizadas += 1;
     } else {
-      result.push(incoming);
+      const row = { ...incoming, teamId: getCurrentTeamId() };
+      result.push(row);
       keyToIndex.set(k, result.length - 1);
       insertadas += 1;
-      registrosInsertados.push(incoming);
+      registrosInsertados.push(row);
     }
   });
   return { data: result, insertadas, actualizadas, registrosInsertados };
@@ -5619,20 +6340,26 @@ function deserializeModelo(list) {
 }
 
 /**
- * Persiste snapshot coherente en localStorage.
+ * Persiste snapshot coherente en appMemoryKV.
  * @param {{ incluirTablasData?: boolean }} [opts] — Si `incluirTablasData === false`, no sobrescribe data_general / data_anuncios (evita borrar DATA en disco cuando el estado en memoria aún no hidrató bien).
  */
 function guardarTodo(opts = {}) {
+  if (shouldDeferDiskPersistence()) return;
   const incluirTablasData = opts.incluirTablasData !== false;
   try {
-    localStorage.setItem("planning", JSON.stringify(records));
+    recomputePlanningMergedCacheFromRecords();
+    const mergedPlan = planningMergedRecordsCache || records.slice();
+    appMemoryKV.setItem("planning", JSON.stringify(mergedPlan));
+    appMemoryKV.setItem(LS_PLANNING_DATA, JSON.stringify({ records: mergedPlan, recordIdSeq: getPlanningRecordIdSeq() }));
     if (incluirTablasData) {
-      localStorage.setItem("data_general", JSON.stringify(serializeDataReal(dataReal)));
-      localStorage.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnuncios)));
+      refreshTeamScopedDataCachesForSnapshot();
+      appMemoryKV.setItem("data_general", JSON.stringify(serializeDataReal(dataRealMergedCache || dataReal)));
+      appMemoryKV.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios)));
     }
-    localStorage.setItem("relaciones", JSON.stringify(relaciones));
-    localStorage.setItem("centro_costos", JSON.stringify(centrosCostos));
-    localStorage.setItem("modelo", JSON.stringify(serializeModelo(modeloAnalitico)));
+    refreshTeamScopedDataCachesForSnapshot();
+    appMemoryKV.setItem("relaciones", JSON.stringify(relacionesMergedCache || relaciones));
+    appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
+    appMemoryKV.setItem("modelo", JSON.stringify(serializeModelo(modeloMergedCache || modeloAnalitico)));
   } catch (err) {
     console.warn("No se pudo ejecutar guardarTodo()", err);
   }
@@ -5675,13 +6402,27 @@ function pruneRelacionesWithoutData() {
 }
 
 function persistRelacionesAndModeloCleared() {
+  const tid = getCurrentTeamId();
   relaciones = [];
   modeloAnalitico = [];
-  guardarEnLocalStorage(LS_KEYS.relaciones, relaciones);
-  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloAnalitico));
-  guardarEnLocalStorage("modelo", serializeModelo(modeloAnalitico));
+  relacionesMergedCache = mergeRowsByTeamId(
+    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
+    relaciones,
+    tid,
+    normalizeRowTeamId
+  );
+  modeloMergedCache = mergeRowsByTeamId(
+    Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk(),
+    modeloAnalitico,
+    tid,
+    normalizeRowTeamId
+  );
+  guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
+  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
+  guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   guardarTodo();
-  guardarDebounce();
+  if (!shouldDeferDiskPersistence()) guardarDebounce();
+  if (shouldDeferDiskPersistence()) notifyDraftChanged();
 }
 
 function syncDataRelacionesModeloConsistency() {
@@ -5699,7 +6440,14 @@ function syncDataRelacionesModeloConsistency() {
 
   const relChanged = pruneRelacionesWithoutData();
   if (relChanged) {
-    guardarEnLocalStorage(LS_KEYS.relaciones, relaciones);
+    const tid = getCurrentTeamId();
+    relacionesMergedCache = mergeRowsByTeamId(
+      Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
+      relaciones,
+      tid,
+      normalizeRowTeamId
+    );
+    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
     guardarTodo();
   }
   REGENERAR_MODELO();
@@ -5711,79 +6459,237 @@ function syncDataRelacionesModeloConsistency() {
   } catch {}
 }
 
+function readFullDataRealRowsFromDisk() {
+  const rawGeneral = cargarDesdeLocalStorage("data_general") ?? cargarDesdeLocalStorage(LS_KEYS.dataReal) ?? cargarDesdeLocalStorage("dataReal");
+  const storedData = normalizarArrayPersistido(rawGeneral);
+  const rows = storedData ? deserializeDataReal(storedData) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function readFullDataAdsRowsFromDisk() {
+  const rawAds = cargarDesdeLocalStorage("data_ads_report") ?? cargarDesdeLocalStorage(LS_KEYS.dataAdsReport) ?? cargarDesdeLocalStorage("dataAdsReport");
+  const storedAds = normalizarArrayPersistido(rawAds);
+  const rows = storedAds ? deserializeDataReal(storedAds) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function readFullDataAnunciosRowsFromDisk() {
+  const rawAnuncios = cargarDesdeLocalStorage("data_anuncios") ?? cargarDesdeLocalStorage(LS_KEYS.dataAnuncios) ?? cargarDesdeLocalStorage("dataAnuncios");
+  const storedAnuncios = normalizarArrayPersistido(rawAnuncios);
+  const rows = storedAnuncios ? deserializeDataAnuncios(storedAnuncios) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function readFullCampaniasUnicasFromDisk() {
+  const storedUnique = cargarDesdeLocalStorage(LS_KEYS.campaniasUnicasData);
+  const rows = Array.isArray(storedUnique) ? storedUnique.map((x) => (typeof x === "object" && x ? { ...x } : x)) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function readFullRelacionesFromDisk() {
+  const storedRel = cargarDesdeLocalStorage("relaciones") ?? cargarDesdeLocalStorage(LS_KEYS.relaciones);
+  const rel = Array.isArray(storedRel) ? storedRel.map((x) => ({ ...x })) : [];
+  migrateMissingTeamIdOnRows(rel);
+  return rel;
+}
+
+function readFullMedidasFromDisk() {
+  const storedMed = cargarDesdeLocalStorage(LS_KEYS.medidas);
+  const rows = Array.isArray(storedMed) ? storedMed.map((x) => ({ ...x })) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function readFullModeloFromDisk() {
+  const storedModelo = cargarDesdeLocalStorage("modelo") ?? cargarDesdeLocalStorage(LS_KEYS.modeloAnalitico);
+  const rows = Array.isArray(storedModelo) ? deserializeModelo(storedModelo) : [];
+  migrateMissingTeamIdOnRows(rows);
+  return rows;
+}
+
+function refreshTeamScopedDataCachesForSnapshot() {
+  const tid = getCurrentTeamId();
+  dataRealMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk(),
+    dataReal,
+    tid,
+    normalizeRowTeamId
+  );
+  dataAdsReportMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataAdsReportMergedCache) && dataAdsReportMergedCache.length ? dataAdsReportMergedCache : readFullDataAdsRowsFromDisk(),
+    dataAdsReport,
+    tid,
+    normalizeRowTeamId
+  );
+  dataAnunciosMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataAnunciosMergedCache) && dataAnunciosMergedCache.length ? dataAnunciosMergedCache : readFullDataAnunciosRowsFromDisk(),
+    dataAnuncios,
+    tid,
+    normalizeRowTeamId
+  );
+  campaniasUnicasMergedCache = mergeRowsByTeamId(
+    Array.isArray(campaniasUnicasMergedCache) && campaniasUnicasMergedCache.length ? campaniasUnicasMergedCache : readFullCampaniasUnicasFromDisk(),
+    campaniasUnicasData.map((r) => (typeof r === "object" && r ? { ...r, teamId: tid } : r)),
+    tid,
+    normalizeRowTeamId
+  );
+  relacionesMergedCache = mergeRowsByTeamId(
+    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
+    relaciones,
+    tid,
+    normalizeRowTeamId
+  );
+  medidasMergedCache = mergeRowsByTeamId(
+    Array.isArray(medidasMergedCache) && medidasMergedCache.length ? medidasMergedCache : readFullMedidasFromDisk(),
+    medidas,
+    tid,
+    normalizeRowTeamId
+  );
+  modeloMergedCache = mergeRowsByTeamId(
+    Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk(),
+    modeloAnalitico,
+    tid,
+    normalizeRowTeamId
+  );
+}
+
 function persistDataState() {
-  guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataReal));
-  guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReport));
-  guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnuncios));
-  guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasData);
+  const tid = getCurrentTeamId();
+  dataRealMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk(),
+    dataReal,
+    tid,
+    normalizeRowTeamId
+  );
+  dataAdsReportMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataAdsReportMergedCache) && dataAdsReportMergedCache.length ? dataAdsReportMergedCache : readFullDataAdsRowsFromDisk(),
+    dataAdsReport,
+    tid,
+    normalizeRowTeamId
+  );
+  dataAnunciosMergedCache = mergeRowsByTeamId(
+    Array.isArray(dataAnunciosMergedCache) && dataAnunciosMergedCache.length ? dataAnunciosMergedCache : readFullDataAnunciosRowsFromDisk(),
+    dataAnuncios,
+    tid,
+    normalizeRowTeamId
+  );
+  campaniasUnicasMergedCache = mergeRowsByTeamId(
+    Array.isArray(campaniasUnicasMergedCache) && campaniasUnicasMergedCache.length ? campaniasUnicasMergedCache : readFullCampaniasUnicasFromDisk(),
+    campaniasUnicasData.map((r) => (typeof r === "object" && r ? { ...r, teamId: tid } : r)),
+    tid,
+    normalizeRowTeamId
+  );
+  guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataRealMergedCache));
+  guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache));
+  guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache));
+  guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache);
   guardarTodo();
   syncDataRelacionesModeloConsistency();
-  guardarDebounce();
+  if (!shouldDeferDiskPersistence()) guardarDebounce();
+  if (shouldDeferDiskPersistence()) notifyDraftChanged();
 }
 
 function persistRelacionesState() {
-  guardarEnLocalStorage(LS_KEYS.relaciones, relaciones);
+  const tid = getCurrentTeamId();
+  relacionesMergedCache = mergeRowsByTeamId(
+    Array.isArray(relacionesMergedCache) && relacionesMergedCache.length ? relacionesMergedCache : readFullRelacionesFromDisk(),
+    relaciones,
+    tid,
+    normalizeRowTeamId
+  );
+  guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
   REGENERAR_MODELO();
   guardarTodo();
-  guardarDebounce();
+  if (!shouldDeferDiskPersistence()) guardarDebounce();
+  if (shouldDeferDiskPersistence()) notifyDraftChanged();
 }
 
 function persistMedidasState() {
-  guardarEnLocalStorage(LS_KEYS.medidas, medidas);
-  guardarDebounce();
+  const tid = getCurrentTeamId();
+  medidasMergedCache = mergeRowsByTeamId(
+    Array.isArray(medidasMergedCache) && medidasMergedCache.length ? medidasMergedCache : readFullMedidasFromDisk(),
+    medidas,
+    tid,
+    normalizeRowTeamId
+  );
+  guardarEnLocalStorage(LS_KEYS.medidas, medidasMergedCache);
+  if (!shouldDeferDiskPersistence()) guardarDebounce();
+  if (shouldDeferDiskPersistence()) notifyDraftChanged();
 }
 
 function persistModeloState() {
-  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloAnalitico));
-  guardarEnLocalStorage("modelo", serializeModelo(modeloAnalitico));
+  const tid = getCurrentTeamId();
+  modeloMergedCache = mergeRowsByTeamId(
+    Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk(),
+    modeloAnalitico,
+    tid,
+    normalizeRowTeamId
+  );
+  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
+  guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   guardarTodo();
-  guardarDebounce();
+  if (!shouldDeferDiskPersistence()) guardarDebounce();
+  if (shouldDeferDiskPersistence()) notifyDraftChanged();
 }
 
 function hydratarDesdeLocalStorage() {
-  const rawGeneral = cargarDesdeLocalStorage("data_general") ?? cargarDesdeLocalStorage(LS_KEYS.dataReal) ?? cargarDesdeLocalStorage("dataReal");
-  const rawAds = cargarDesdeLocalStorage("data_ads_report") ?? cargarDesdeLocalStorage(LS_KEYS.dataAdsReport) ?? cargarDesdeLocalStorage("dataAdsReport");
-  const rawAnuncios = cargarDesdeLocalStorage("data_anuncios") ?? cargarDesdeLocalStorage(LS_KEYS.dataAnuncios) ?? cargarDesdeLocalStorage("dataAnuncios");
-  const storedData = normalizarArrayPersistido(rawGeneral);
-  const storedAds = normalizarArrayPersistido(rawAds);
-  const storedAnuncios = normalizarArrayPersistido(rawAnuncios);
-  const storedUnique = cargarDesdeLocalStorage(LS_KEYS.campaniasUnicasData);
-  const storedRel = cargarDesdeLocalStorage("relaciones") ?? cargarDesdeLocalStorage(LS_KEYS.relaciones);
-  const storedMed = cargarDesdeLocalStorage(LS_KEYS.medidas);
-  const storedModelo = cargarDesdeLocalStorage("modelo") ?? cargarDesdeLocalStorage(LS_KEYS.modeloAnalitico);
-
-  dataReal = storedData ? deserializeDataReal(storedData) : [];
-  dataAdsReport = storedAds ? deserializeDataReal(storedAds) : [];
-  dataAnuncios = storedAnuncios ? deserializeDataAnuncios(storedAnuncios) : [];
-  if (!dataAnuncios.length && dataAdsReport.length) {
-    dataAnuncios = migrateLegacyDataAdsReportToAnuncios(dataAdsReport);
-    dataAdsReport = [];
+  let dr = readFullDataRealRowsFromDisk();
+  let dAds = readFullDataAdsRowsFromDisk();
+  let dAnu = readFullDataAnunciosRowsFromDisk();
+  if (!dAnu.length && dAds.length) {
+    dAnu = migrateLegacyDataAdsReportToAnuncios(dAds);
+    dAds = [];
+    migrateMissingTeamIdOnRows(dAnu);
     try {
-      localStorage.setItem(LS_KEYS.dataAdsReport, JSON.stringify(serializeDataReal(dataAdsReport)));
-      localStorage.setItem(LS_KEYS.dataAnuncios, JSON.stringify(serializeDataAnuncios(dataAnuncios)));
+      appMemoryKV.setItem(LS_KEYS.dataAdsReport, JSON.stringify(serializeDataReal(dAds)));
+      appMemoryKV.setItem(LS_KEYS.dataAnuncios, JSON.stringify(serializeDataAnuncios(dAnu)));
     } catch (err) {
       console.warn("No se pudo persistir migración data anuncios", err);
     }
   }
+  dataRealMergedCache = dr;
+  dataAdsReportMergedCache = dAds;
+  dataAnunciosMergedCache = dAnu;
+  dataReal = dr.filter(rowBelongsToCurrentTeam);
+  dataAdsReport = dAds.filter(rowBelongsToCurrentTeam);
+  dataAnuncios = dAnu.filter(rowBelongsToCurrentTeam);
   console.log("General:", dataReal.length);
   console.log("Anuncios:", dataAnuncios.length);
+
+  campaniasUnicasMergedCache = readFullCampaniasUnicasFromDisk();
+  const tidCu = getCurrentTeamId();
   const allCampaignRows = getAllCampaignRows();
   if (allCampaignRows.length) {
     campaniasUnicasData = generarCampañasUnicas(allCampaignRows);
   } else {
-    campaniasUnicasData = generarCampañasUnicas(Array.isArray(storedUnique) ? storedUnique : []);
+    const fallback = campaniasUnicasMergedCache.filter(rowBelongsToCurrentTeam);
+    campaniasUnicasData = generarCampañasUnicas(fallback.length ? fallback : []);
   }
-  guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasData);
-  relaciones = Array.isArray(storedRel) ? storedRel : [];
+  campaniasUnicasData = campaniasUnicasData.map((r) => (r && typeof r === "object" ? { ...r, teamId: tidCu } : r));
+  guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache);
+
+  relacionesMergedCache = readFullRelacionesFromDisk();
+  relaciones = relacionesMergedCache.filter(rowBelongsToCurrentTeam);
   normalizeRelacionesPlanningKeys();
-  medidas = Array.isArray(storedMed) ? storedMed : [];
-  modeloAnalitico = Array.isArray(storedModelo) ? deserializeModelo(storedModelo) : [];
+
+  medidasMergedCache = readFullMedidasFromDisk();
+  medidas = medidasMergedCache.filter(rowBelongsToCurrentTeam);
+
+  modeloMergedCache = readFullModeloFromDisk();
+  modeloAnalitico = modeloMergedCache.filter(rowBelongsToCurrentTeam);
+
   if (!hasDataGeneralLoaded()) {
     relaciones = [];
     modeloAnalitico = [];
-    guardarEnLocalStorage(LS_KEYS.relaciones, relaciones);
-    guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloAnalitico));
-    guardarEnLocalStorage("modelo", serializeModelo(modeloAnalitico));
+    relacionesMergedCache = mergeRowsByTeamId(relacionesMergedCache, [], getCurrentTeamId(), normalizeRowTeamId);
+    modeloMergedCache = mergeRowsByTeamId(modeloMergedCache, [], getCurrentTeamId(), normalizeRowTeamId);
+    guardarEnLocalStorage(LS_KEYS.relaciones, relacionesMergedCache);
+    guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
+    guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   } else {
     pruneRelacionesWithoutData();
   }
@@ -5853,7 +6759,8 @@ function dataUpsertKeyGeneral(r) {
 
 function mergeDataRowPreservingId(existing, incoming) {
   const id = existing._id;
-  return { ...existing, ...incoming, _id: id };
+  const teamKeep = normalizeRowTeamId(incoming) !== TEAM_GENERAL_ID ? normalizeRowTeamId(incoming) : normalizeRowTeamId(existing);
+  return { ...existing, ...incoming, _id: id, teamId: teamKeep || getCurrentTeamId() };
 }
 
 /**
@@ -5882,10 +6789,11 @@ function upsertDataRowsLote(newRows, dataActual) {
       result[idx] = mergeDataRowPreservingId(result[idx], incoming);
       actualizadas += 1;
     } else {
-      result.push(incoming);
+      const row = { ...incoming, teamId: getCurrentTeamId() };
+      result.push(row);
       keyToIndex.set(k, result.length - 1);
       insertadas += 1;
-      registrosInsertados.push(incoming);
+      registrosInsertados.push(row);
     }
   });
 
@@ -6791,7 +7699,7 @@ function normalizeAdsThumbEntry(rawEntry) {
 
 function loadAdsReportThumbsMap() {
   try {
-    const raw = localStorage.getItem(LS_ADS_REPORT_THUMBS);
+    const raw = appMemoryKV.getItem(LS_ADS_REPORT_THUMBS);
     if (!raw) return {};
     const obj = JSON.parse(raw);
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
@@ -6811,7 +7719,7 @@ function saveAdsReportThumbsMap(map) {
     Object.entries(map || {}).forEach(([k, v]) => {
       normalized[k] = normalizeAdsThumbEntry(v);
     });
-    localStorage.setItem(LS_ADS_REPORT_THUMBS, JSON.stringify(normalized));
+    appMemoryKV.setItem(LS_ADS_REPORT_THUMBS, JSON.stringify(normalized));
   } catch (err) {
     console.warn("No se pudo guardar miniaturas del reporte de anuncios", err);
   }
@@ -7499,20 +8407,12 @@ function relSetTrendLine(elId, prev, cur, opts = {}) {
 }
 
 function exportRelacionesJsonFile() {
-  try {
-    const blob = new Blob([JSON.stringify(relaciones, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `relaciones-${formatDateInputFromDate(new Date()) || "export"}.json`;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    console.warn("exportRelacionesJsonFile", e);
-  }
+  void showAppDialog({
+    message: "La exportación a JSON está deshabilitada. Usa Publicar para persistir en el servidor.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
 function renderRelacionesEstado() {
@@ -7727,6 +8627,7 @@ function generarModeloAnalitico() {
         if (seen.has(rowKey)) return;
         seen.add(rowKey);
         out.push({
+          teamId: getCurrentTeamId(),
           tipo: planning.tipo,
           programa: planning.programa,
           intake: planning.intake,
@@ -7879,7 +8780,7 @@ function mostrarFechaActualizacion() {
 
   let data = [];
   try {
-    const raw = localStorage.getItem("data_general");
+    const raw = appMemoryKV.getItem("data_general");
     if (!raw) {
       vaciar();
       return;
@@ -8306,10 +9207,10 @@ function initMedidasModule() {
     const existingId = idInput.value;
     if (existingId) {
       const idx = medidas.findIndex((m) => m.id === existingId);
-      if (idx >= 0) medidas[idx] = { ...medidas[idx], nombre, formula, descripcion };
+      if (idx >= 0) medidas[idx] = { ...medidas[idx], nombre, formula, descripcion, teamId: getCurrentTeamId() };
     } else {
       const id = `med_${Date.now()}_${medidas.length}`;
-      medidas.push({ id, nombre, formula, descripcion });
+      medidas.push({ id, nombre, formula, descripcion, teamId: getCurrentTeamId() });
     }
     persistMedidasState();
     closeModal();
@@ -8389,6 +9290,7 @@ function vincularCampanias() {
       const dataRow = getDataUniqueList().find((d) => String(d.idCampania) === idCampania);
       const coincidencia = planningRec && dataRow ? calcularScore(planningRec, dataRow) : null;
       relaciones.push({
+        teamId: getCurrentTeamId(),
         planningKey,
         idCampania,
         nombre,
@@ -8473,6 +9375,7 @@ function aplicarSugerencia(idx) {
       const dataRow = getDataUniqueList().find((d) => String(d.idCampania) === idCampania);
       const coincidencia = planningRec && dataRow ? calcularScore(planningRec, dataRow) : null;
       relaciones.push({
+        teamId: getCurrentTeamId(),
         planningKey: sug.planningKey,
         idCampania,
         nombre,
@@ -9508,7 +10411,7 @@ function renderDashboardPeriodHeaders() {
 
 function guardarMostrarMetaGlobal() {
   try {
-    localStorage.setItem(LS_DASH_MOSTRAR_META_GLOBAL, String(mostrarMetaGlobal));
+    appMemoryKV.setItem(LS_DASH_MOSTRAR_META_GLOBAL, String(mostrarMetaGlobal));
   } catch (err) {
     console.warn("No se pudo guardar estado de META GLOBAL", err);
   }
@@ -10108,55 +11011,12 @@ function formatFechaExportDashGastoDiff(d) {
 }
 
 function exportDashGastoDiffToExcel() {
-  if (typeof XLSX === "undefined") {
-    alert("No se pudo cargar la librería de exportación (SheetJS). Comprueba tu conexión e intenta de nuevo.");
-    return;
-  }
-  const rows = computeDashGastoDiffExcludedRows().filter((r) => (Number(r.gasto) || 0) > DASH_GASTO_DIFF_EPS);
-  if (!rows.length) {
-    alert("No hay registros para exportar en el periodo seleccionado.");
-    return;
-  }
-  const dataExport = rows.map((r) => ({
-    Fecha: formatFechaExportDashGastoDiff(r.fecha instanceof Date ? r.fecha : null),
-    "ID Campaña": r.idCampania,
-    Nombre: r.nombre,
-    Gasto: Number(r.gasto) || 0,
-    "Motivo exclusión": String(r.motivo ?? "").trim()
-  }));
-  try {
-    const ws = XLSX.utils.json_to_sheet(dataExport);
-    ws["!cols"] = [{ wch: 12 }, { wch: 18 }, { wch: 36 }, { wch: 14 }, { wch: 56 }];
-    const ref = ws["!ref"];
-    if (ref) {
-      const range = XLSX.utils.decode_range(ref);
-      const gastoCol = 3;
-      for (let R = 1; R <= range.e.r; R += 1) {
-        const addr = XLSX.utils.encode_cell({ r: R, c: gastoCol });
-        const cell = ws[addr];
-        if (cell && cell.t === "n" && Number.isFinite(cell.v)) {
-          cell.z = '"$"#,##0.00';
-        }
-      }
-    }
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Diferencias");
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([wbout], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = dashboardGastoDiffExportFilename();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error(err);
-    alert("No se pudo generar el archivo Excel.");
-  }
+  void showAppDialog({
+    message: "La exportación a Excel está deshabilitada.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
 function dashboardExportFilename() {
@@ -10168,52 +11028,12 @@ function dashboardExportFilename() {
 }
 
 function exportDashboardTableToExcel() {
-  if (typeof XLSX === "undefined") {
-    alert("No se pudo cargar la librería de exportación (SheetJS). Comprueba tu conexión e intenta de nuevo.");
-    return;
-  }
-  const table = document.querySelector("#dashboardModule .dash-table");
-  const tbody = document.getElementById("dashTbody");
-  if (!(table instanceof HTMLTableElement) || !(tbody instanceof HTMLTableSectionElement)) return;
-  const hasRows = Array.from(tbody.querySelectorAll("tr")).some(
-    (tr) => tr instanceof HTMLTableRowElement && !tr.classList.contains("dash-tr-empty")
-  );
-  if (!hasRows) {
-    alert("No hay filas para exportar con los filtros actuales.");
-    return;
-  }
-  try {
-    const exportTable = table.cloneNode(true);
-    const exportRows = Array.from(exportTable.querySelectorAll("#dashTbody tr[data-dash-row]"));
-    exportRows.forEach((tr) => {
-      const rowKey = String(tr.getAttribute("data-dash-row") || "");
-      if (!rowKey) return;
-      const estado = getDashboardRowDeliveryEstado(rowKey);
-      const estadoTxt = estado === "Activo" ? "ON" : estado === "Inactivo" ? "OFF" : "";
-      const firstCell = tr.querySelector("td");
-      if (firstCell) firstCell.textContent = estadoTxt;
-    });
-    const wb = XLSX.utils.table_to_book(exportTable, {
-      sheet: "Dashboard",
-      raw: true,
-      display: true
-    });
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([wbout], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = dashboardExportFilename();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error(err);
-    alert("No se pudo generar el archivo Excel del dashboard.");
-  }
+  void showAppDialog({
+    message: "La exportación a Excel está deshabilitada.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
 function planningExportFilename() {
@@ -10225,41 +11045,12 @@ function planningExportFilename() {
 }
 
 function exportPlanningTableToExcel() {
-  if (typeof XLSX === "undefined") {
-    alert("No se pudo cargar la librería de exportación (SheetJS). Comprueba tu conexión e intenta de nuevo.");
-    return;
-  }
-  const table = document.querySelector("#planningModule .planning-table");
-  const tbody = document.getElementById("planningBody");
-  if (!(table instanceof HTMLTableElement) || !(tbody instanceof HTMLTableSectionElement)) return;
-  const hasRows = Array.from(tbody.querySelectorAll("tr")).length > 0;
-  if (!hasRows) {
-    alert("No hay filas para exportar con los filtros actuales.");
-    return;
-  }
-  try {
-    const exportTable = table.cloneNode(true);
-    const wb = XLSX.utils.table_to_book(exportTable, {
-      sheet: "Planning",
-      raw: true,
-      display: true
-    });
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([wbout], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = planningExportFilename();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error(err);
-    alert("No se pudo generar el archivo Excel del planning.");
-  }
+  void showAppDialog({
+    message: "La exportación a Excel está deshabilitada.",
+    primaryText: "Entendido",
+    showSecondary: false,
+    primaryDanger: false
+  });
 }
 
 function openDashGastoDiffModal() {
@@ -11410,7 +12201,79 @@ const LS_CAMPATRACK_USER = "campatrack_user";
 const LS_CAMPATRACK_THEME = "theme";
 /** Usuarios registrados localmente (JSON array). */
 const LS_CAMPATRACK_USERS = "campatrack_users_db";
+/** Borrador en RAM cuando hay persistencia diferida; `null` = aún no hidratado desde disco. */
+let campatrackUsersDraft = null;
+
+function hydrateCampatrackUsersDraftFromLocalStorageIfNeeded() {
+  if (campatrackUsersDraft !== null) return;
+  try {
+    const raw = appMemoryKV.getItem(LS_CAMPATRACK_USERS);
+    if (!raw) {
+      campatrackUsersDraft = [];
+      return;
+    }
+    const arr = JSON.parse(raw);
+    const list = Array.isArray(arr) ? arr : [];
+    campatrackUsersDraft = list.map((u) => (u && typeof u === "object" ? { ...u } : u));
+  } catch {
+    campatrackUsersDraft = [];
+  }
+}
+
+function campatrackInvalidateUsersDraft() {
+  campatrackUsersDraft = null;
+}
+
+function getCampatrackStoredUsers() {
+  hydrateCampatrackUsersDraftFromLocalStorageIfNeeded();
+  return campatrackUsersDraft.map((u) => (u && typeof u === "object" ? { ...u } : u));
+}
+
+function saveCampatrackStoredUsers(list) {
+  const next = Array.isArray(list) ? list.map((u) => (u && typeof u === "object" ? { ...u } : u)) : [];
+  campatrackUsersDraft = next;
+  if (!shouldDeferDiskPersistence()) {
+    try {
+      appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(campatrackUsersDraft));
+    } catch (e) {
+      console.warn("No se pudo guardar usuarios", e);
+    }
+  } else {
+    notifyDraftChanged();
+  }
+}
+
 const CAMPATRACK_DEFAULT_USER_AVATAR = "assets/profile-richi.png";
+
+/**
+ * Usuario raíz solo en memoria (pruebas). No se guarda en BD ni en la lista local de usuarios.
+ * Credenciales: usuario `admin` / clave `admin123`.
+ */
+const SYSTEM_ADMIN = {
+  id: "admin",
+  usuario: "admin",
+  clave: "admin123",
+  nombre: "Administrador",
+  apellido: "Sistema",
+  cargo: "Administrador",
+  teamId: "ALL",
+  permisos: "ALL",
+};
+
+function buildCampatrackSystemAdminSession() {
+  return {
+    id: SYSTEM_ADMIN.id,
+    username: SYSTEM_ADMIN.usuario,
+    role: "admin",
+    nombre: SYSTEM_ADMIN.nombre,
+    apellido: SYSTEM_ADMIN.apellido,
+    cargo: SYSTEM_ADMIN.cargo,
+    teamId: SYSTEM_ADMIN.teamId,
+    teamNombre: "Todos los equipos",
+    foto: CAMPATRACK_DEFAULT_USER_AVATAR,
+    campatrackSystemRoot: true,
+  };
+}
 
 const CAMPATRACK_TOPBAR_META = {
   dashboard: { title: "Dashboard", sub: "Resumen de desempeño, presupuesto y rendimiento", icon: "fa-chart-pie" },
@@ -11437,44 +12300,71 @@ const CAMPATRACK_REGISTER_MODULE_CARDS = [
   { id: "ads-report", label: "Reporte de anuncios", desc: "Rendimiento de anuncios", icon: "fa-bullhorn", tone: "sky" },
 ];
 
+const CAMPATRACK_LS_PRESERVE_ON_LOGIN = [
+  LS_PLANNING_DATA,
+  "planning",
+  "planningData",
+  LS_CC_DATA,
+  "centro_costos",
+  "centros_costos",
+  LS_CATALOGOS_SISTEMA,
+  LS_KEYS.dataReal,
+  "data_general",
+  "dataReal",
+  LS_KEYS.dataAdsReport,
+  "data_ads_report",
+  "dataAdsReport",
+  LS_KEYS.dataAnuncios,
+  "data_anuncios",
+  "dataAnuncios",
+  LS_KEYS.relaciones,
+  "relaciones",
+  LS_KEYS.campaniasUnicasData,
+  LS_KEYS.medidas,
+  LS_KEYS.modeloAnalitico,
+  "modelo",
+  LS_CONSUMO_CAMPANA,
+  LS_BITACORA_DATA,
+  "programas",
+  LS_CAMPATRACK_TEAMS,
+  LS_DASH_MOSTRAR_META_GLOBAL,
+  LS_ADS_REPORT_THUMBS
+];
+
 function campatrackSnapshotAuthLocalStorage() {
   let users = null;
   let theme = null;
   try {
-    users = localStorage.getItem(LS_CAMPATRACK_USERS);
+    users = JSON.stringify(getCampatrackStoredUsers());
   } catch (_) {}
   try {
-    theme = localStorage.getItem(LS_CAMPATRACK_THEME);
+    theme = appMemoryKV.getItem(LS_CAMPATRACK_THEME);
   } catch (_) {}
-  return { users, theme };
+  const preserved = {};
+  for (const k of CAMPATRACK_LS_PRESERVE_ON_LOGIN) {
+    try {
+      const v = appMemoryKV.getItem(k);
+      if (v != null) preserved[k] = v;
+    } catch (_) {}
+  }
+  return { users, theme, preserved };
 }
 
 function campatrackRestoreAuthLocalStorage(snap) {
   if (!snap) return;
   try {
-    if (snap.users != null) localStorage.setItem(LS_CAMPATRACK_USERS, snap.users);
+    if (snap.users != null) appMemoryKV.setItem(LS_CAMPATRACK_USERS, snap.users);
   } catch (_) {}
   try {
-    if (snap.theme != null) localStorage.setItem(LS_CAMPATRACK_THEME, snap.theme);
+    if (snap.theme != null) appMemoryKV.setItem(LS_CAMPATRACK_THEME, snap.theme);
   } catch (_) {}
-}
-
-function getCampatrackStoredUsers() {
-  try {
-    const raw = localStorage.getItem(LS_CAMPATRACK_USERS);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveCampatrackStoredUsers(list) {
-  try {
-    localStorage.setItem(LS_CAMPATRACK_USERS, JSON.stringify(list));
-  } catch (e) {
-    console.warn("No se pudo guardar usuarios", e);
+  if (snap.preserved && typeof snap.preserved === "object") {
+    for (const [k, v] of Object.entries(snap.preserved)) {
+      if (v == null) continue;
+      try {
+        appMemoryKV.setItem(k, v);
+      } catch (_) {}
+    }
   }
 }
 
@@ -11542,8 +12432,11 @@ async function tryLocalCampatrackLogin(username, plainPassword) {
 
 function buildCampatrackLocalSessionFromRecord(rec) {
   const modulos = { ...normalizeCampatrackUserModulos(rec.modulos) };
+  const teamId = String(rec.teamId || "").trim() || TEAM_GENERAL_ID;
+  const username = String(rec.usuario || "").trim();
   return {
-    username: String(rec.usuario || "").trim(),
+    id: username,
+    username,
     role: normalizeCampatrackRoleKey(rec.rol || "usuario"),
     nombre: String(rec.nombre || "").trim(),
     apellido: String(rec.apellido || "").trim(),
@@ -11551,6 +12444,8 @@ function buildCampatrackLocalSessionFromRecord(rec) {
     foto: String(rec.foto || "").trim() || CAMPATRACK_DEFAULT_USER_AVATAR,
     campatrackLocalProfile: true,
     permisosModulos: modulos,
+    teamId,
+    teamNombre: resolveCampatrackTeamNombre(teamId),
   };
 }
 
@@ -11562,7 +12457,10 @@ function campatrackRefreshSessionIfUserRecordMatches(updatedRecord) {
     String(updatedRecord.usuario || "").trim().toLowerCase();
   if (!same) return;
   try {
-    sessionStorage.setItem(SS_USER_SESSION_JSON, JSON.stringify(buildCampatrackLocalSessionFromRecord(updatedRecord)));
+    const next = buildCampatrackLocalSessionFromRecord(updatedRecord);
+    window.currentUser = next;
+    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(next));
+    persistCampatrackSessionToBrowserStorage();
   } catch (_) {
     /* ignore */
   }
@@ -11579,18 +12477,24 @@ function campatrackRefreshSessionIfUserRecordMatches(updatedRecord) {
 function campatrackApplyLoginSuccessToStorage(sessionUser) {
   const snap = campatrackSnapshotAuthLocalStorage();
   try {
-    localStorage.clear();
+    appMemoryKV.clear();
   } catch (_) {}
   campatrackRestoreAuthLocalStorage(snap);
   try {
-    sessionStorage.setItem(SS_USER_SESSION_JSON, JSON.stringify(sessionUser));
-    sessionStorage.setItem(SS_USUARIO_LOGUEADO, "true");
-    localStorage.setItem(LS_CAMPATRACK_AUTH, "true");
-    localStorage.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(sessionUser.role));
-    localStorage.setItem(LS_CAMPATRACK_USER, String(sessionUser.username ?? ""));
+    window.currentUser = {
+      ...sessionUser,
+      id: sessionUser.id != null ? String(sessionUser.id) : String(sessionUser.username ?? "").trim()
+    };
+    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
+    appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
+    appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
+    appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(sessionUser.role));
+    appMemoryKV.setItem(LS_CAMPATRACK_USER, String(sessionUser.username ?? ""));
+    persistCampatrackSessionToBrowserStorage();
   } catch (se) {
     console.warn("No se pudo guardar sesión", se);
   }
+  campatrackInvalidateUsersDraft();
 }
 
 function updateAppTopbarForModule(which) {
@@ -11643,7 +12547,7 @@ function initAppThemeToggle() {
   const btn = document.getElementById("appThemeToggle");
   if (!btn) return;
   try {
-    const theme = localStorage.getItem(LS_CAMPATRACK_THEME);
+    const theme = appMemoryKV.getItem(LS_CAMPATRACK_THEME);
     if (theme === "dark") document.body.classList.add("dark-mode");
     else if (theme === "light") document.body.classList.remove("dark-mode");
   } catch (e) {
@@ -11654,7 +12558,7 @@ function initAppThemeToggle() {
     document.body.classList.toggle("dark-mode");
     const dark = document.body.classList.contains("dark-mode");
     try {
-      localStorage.setItem(LS_CAMPATRACK_THEME, dark ? "dark" : "light");
+      appMemoryKV.setItem(LS_CAMPATRACK_THEME, dark ? "dark" : "light");
     } catch (err) {
       /* ignore */
     }
@@ -11665,11 +12569,69 @@ function initAppThemeToggle() {
 const SS_USUARIO_LOGUEADO = "usuario_logueado";
 /** Sesión backend: { username, role } — clave solicitada por el contrato de API */
 const SS_USER_SESSION_JSON = "user";
-const API_LOGIN_URL = "http://localhost:3000/api/login";
+const API_LOGIN_URL = `${CAMPATRACK_API_ORIGIN}/api/login`;
+
+/** Sobrevive a `location.reload()` (tab); no usa `localStorage`. */
+const CAMPATRACK_BROWSER_USER_KEY = "campatrack_session_snapshot_v1";
+
+function persistCampatrackSessionToBrowserStorage() {
+  let u = null;
+  try {
+    if (window.currentUser != null && typeof window.currentUser === "object") u = window.currentUser;
+    else u = getUser();
+  } catch (_) {
+    u = null;
+  }
+  if (!u || !String(u.username || "").trim()) return;
+  try {
+    const withId = { ...u, id: u.id != null ? String(u.id) : String(u.username).trim() };
+    window.currentUser = withId;
+    sessionStorage.setItem(CAMPATRACK_BROWSER_USER_KEY, JSON.stringify(withId));
+  } catch (e) {
+    console.warn("No se pudo persistir sesión en sessionStorage", e);
+  }
+}
+
+function restaurarCampatrackSessionDesdeBrowserStorage() {
+  try {
+    const raw = sessionStorage.getItem(CAMPATRACK_BROWSER_USER_KEY);
+    if (!raw) return;
+    const u = JSON.parse(raw);
+    if (!u || typeof u !== "object" || !String(u.username || "").trim()) return;
+    if (u.role === undefined || String(u.role).trim() === "") return;
+    window.currentUser = { ...u, id: u.id != null ? String(u.id) : String(u.username).trim() };
+    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
+    appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
+    appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
+    appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(window.currentUser.role));
+    appMemoryKV.setItem(LS_CAMPATRACK_USER, String(window.currentUser.username ?? ""));
+  } catch (e) {
+    console.warn("restaurarCampatrackSessionDesdeBrowserStorage", e);
+  }
+}
+
+/** Control central de sesión (memoria + sessionStorage tras login). */
+function isAuthenticated() {
+  try {
+    if (window.currentUser != null && typeof window.currentUser === "object") return true;
+  } catch (_) {}
+  return isCampatrackAuthenticated();
+}
 
 function getUser() {
   try {
-    const raw = sessionStorage.getItem(SS_USER_SESSION_JSON);
+    if (window.currentUser != null && typeof window.currentUser === "object") {
+      const w = window.currentUser;
+      if (
+        w.username !== undefined &&
+        w.role !== undefined &&
+        String(w.username || "").trim() !== "" &&
+        String(w.role || "").trim() !== ""
+      ) {
+        return w;
+      }
+    }
+    const raw = appMemorySession.getItem(SS_USER_SESSION_JSON);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
@@ -11758,7 +12720,7 @@ function normalizeCampatrackRoleKey(raw) {
 function getCampatrackRole() {
   const u = getUser();
   if (u && u.role != null) return normalizeCampatrackRoleKey(u.role);
-  const role = String(localStorage.getItem(LS_CAMPATRACK_ROLE) || "").trim();
+  const role = String(appMemoryKV.getItem(LS_CAMPATRACK_ROLE) || "").trim();
   return normalizeCampatrackRoleKey(role);
 }
 
@@ -11769,6 +12731,9 @@ function getAllowedCampatrackModules(role) {
 /** Conjunto de módulos visibles en sidebar: permisos del usuario local o rol API. */
 function getCampatrackModuleVisibilitySet() {
   const u = getUser();
+  if (u && u.campatrackSystemRoot === true) {
+    return new Set(getAllowedCampatrackModules("admin"));
+  }
   if (u && u.campatrackLocalProfile === true && u.permisosModulos && typeof u.permisosModulos === "object") {
     return new Set(Object.keys(u.permisosModulos).filter((k) => u.permisosModulos[k] === true));
   }
@@ -11777,11 +12742,26 @@ function getCampatrackModuleVisibilitySet() {
 
 function isCampatrackModuleAllowed(which) {
   const u = getUser();
+  if (u && u.campatrackSystemRoot === true) return true;
   if (u && u.campatrackLocalProfile === true && u.permisosModulos && typeof u.permisosModulos === "object") {
     return u.permisosModulos[which] === true;
   }
   const allowed = getAllowedCampatrackModules(getCampatrackRole());
   return allowed.has(which);
+}
+
+function refreshCampatrackTeamHeader() {
+  const el = document.getElementById("appTeamHeaderBadge");
+  if (!el) return;
+  const u = getUser();
+  const name = u && String(u.teamNombre || "").trim() ? String(u.teamNombre).trim() : resolveCampatrackTeamNombre(u?.teamId);
+  if (name) {
+    el.textContent = `Equipo: ${name}`;
+    el.classList.remove("hidden");
+  } else {
+    el.textContent = "";
+    el.classList.add("hidden");
+  }
 }
 
 function syncCampatrackProfileHeader() {
@@ -11815,6 +12795,7 @@ function syncCampatrackProfileHeader() {
   }
   if (name) name.textContent = displayName;
   if (roleEl) roleEl.textContent = titleText;
+  refreshCampatrackTeamHeader();
 }
 
 function bootstrapCampatrackAuthShell() {
@@ -11824,31 +12805,35 @@ function bootstrapCampatrackAuthShell() {
   let ok = isCampatrackAuthenticated();
   if (!ok) {
     try {
-      sessionStorage.removeItem(SS_USUARIO_LOGUEADO);
-      sessionStorage.removeItem(SS_USER_SESSION_JSON);
-      localStorage.removeItem(LS_CAMPATRACK_AUTH);
-      localStorage.removeItem(LS_CAMPATRACK_ROLE);
-      localStorage.removeItem(LS_CAMPATRACK_USER);
+      window.currentUser = null;
+      sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
+      appMemorySession.removeItem(SS_USUARIO_LOGUEADO);
+      appMemorySession.removeItem(SS_USER_SESSION_JSON);
+      appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
+      appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
+      appMemoryKV.removeItem(LS_CAMPATRACK_USER);
     } catch (_) {}
   } else {
     try {
       const u = getUser();
       if (u) {
-        sessionStorage.setItem(SS_USUARIO_LOGUEADO, "true");
-        localStorage.setItem(LS_CAMPATRACK_AUTH, "true");
-        localStorage.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
-        localStorage.setItem(LS_CAMPATRACK_USER, String(u.username ?? ""));
+        appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
+        appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
+        appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
+        appMemoryKV.setItem(LS_CAMPATRACK_USER, String(u.username ?? ""));
       }
     } catch (_) {}
     installCampatrackBackButtonTrap();
     ok = isCampatrackAuthenticated();
     if (!ok) {
       try {
-        sessionStorage.removeItem(SS_USUARIO_LOGUEADO);
-        sessionStorage.removeItem(SS_USER_SESSION_JSON);
-        localStorage.removeItem(LS_CAMPATRACK_AUTH);
-        localStorage.removeItem(LS_CAMPATRACK_ROLE);
-        localStorage.removeItem(LS_CAMPATRACK_USER);
+        window.currentUser = null;
+        sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
+        appMemorySession.removeItem(SS_USUARIO_LOGUEADO);
+        appMemorySession.removeItem(SS_USER_SESSION_JSON);
+        appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
+        appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
+        appMemoryKV.removeItem(LS_CAMPATRACK_USER);
       } catch (_) {}
     }
   }
@@ -11863,10 +12848,12 @@ let appActivateMainModule = null;
 
 function campatrackPerformLogout() {
   try {
-    sessionStorage.clear();
-    localStorage.removeItem(LS_CAMPATRACK_AUTH);
-    localStorage.removeItem(LS_CAMPATRACK_ROLE);
-    localStorage.removeItem(LS_CAMPATRACK_USER);
+    window.currentUser = null;
+    sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
+    appMemorySession.clear();
+    appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
+    appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
+    appMemoryKV.removeItem(LS_CAMPATRACK_USER);
   } catch (e) {
     console.warn("No se pudo cerrar sesión", e);
   }
@@ -11877,10 +12864,12 @@ function campatrackPerformLogout() {
 
 function campatrackPerformLogoutToIndex() {
   try {
-    sessionStorage.clear();
-    localStorage.removeItem(LS_CAMPATRACK_AUTH);
-    localStorage.removeItem(LS_CAMPATRACK_ROLE);
-    localStorage.removeItem(LS_CAMPATRACK_USER);
+    window.currentUser = null;
+    sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
+    appMemorySession.clear();
+    appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
+    appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
+    appMemoryKV.removeItem(LS_CAMPATRACK_USER);
   } catch (e) {
     console.warn("No se pudo cerrar sesión", e);
   }
@@ -11953,6 +12942,25 @@ function initUsuariosModule() {
 
   const el = (id) => document.getElementById(id);
 
+  ensureCampatrackTeamsSeed();
+
+  const fillUsersTeamSelect = (selectedId) => {
+    const sel = el("usersTeamSelect");
+    if (!(sel instanceof HTMLSelectElement)) return;
+    const teams = getCampatrackStoredTeams();
+    const want = String(selectedId || "").trim() || TEAM_GENERAL_ID;
+    const escOpt = (s) => escapeHtml(String(s ?? ""));
+    sel.innerHTML = teams
+      .map((t) => {
+        const id = String(t.id || "").trim();
+        const label = String(t.nombre || id || "").trim() || id;
+        return `<option value="${escOpt(id)}">${escOpt(label)}</option>`;
+      })
+      .join("");
+    if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+    else if (sel.options.length) sel.selectedIndex = 0;
+  };
+
   const renderUsersList = () => {
     const rows = getCampatrackStoredUsers();
     if (!rows.length) {
@@ -11967,15 +12975,17 @@ function initUsuariosModule() {
       return `<span class="users-estado-badge users-estado-badge--on">Activo</span>`;
     };
     listBody.innerHTML = `<table class="users-list-table data-table"><thead><tr>
-      <th>Foto</th><th>Nombre completo</th><th>Cargo</th><th>Usuario</th><th>Estado</th><th class="users-list-actions-col">Acciones</th>
+      <th>Foto</th><th>Nombre completo</th><th>Cargo</th><th>Equipo</th><th>Usuario</th><th>Estado</th><th class="users-list-actions-col">Acciones</th>
     </tr></thead><tbody>${rows
       .map((r) => {
         const id = esc(r.id);
         const inactive = String(r.estado || "").toLowerCase() === "inactivo";
+        const teamLabel = esc(resolveCampatrackTeamNombre(r.teamId || TEAM_GENERAL_ID));
         return `<tr data-user-id="${id}">
       <td class="users-list-avatar-cell"><img class="users-list-avatar" src="${esc(r.foto || CAMPATRACK_DEFAULT_USER_AVATAR)}" alt="" width="40" height="40" loading="lazy" /></td>
       <td>${esc([r.nombre, r.apellido].filter(Boolean).join(" "))}</td>
       <td>${esc(r.cargo)}</td>
+      <td>${teamLabel}</td>
       <td><code>${esc(r.usuario)}</code></td>
       <td>${estadoLabel(r)}</td>
       <td class="users-list-actions-cell">
@@ -12055,9 +13065,16 @@ function initUsuariosModule() {
   };
 
   const clearFieldErrors = () => {
-    ["usersNombreErr", "usersApellidoErr", "usersCargoErr", "usersUsuarioErr", "usersClaveErr", "usersModulosErr", "usersPhotoError"].forEach(
-      (id) => showErr(id, "")
-    );
+    [
+      "usersNombreErr",
+      "usersApellidoErr",
+      "usersCargoErr",
+      "usersUsuarioErr",
+      "usersClaveErr",
+      "usersModulosErr",
+      "usersPhotoError",
+      "usersTeamErr"
+    ].forEach((id) => showErr(id, ""));
     setGlobal("");
   };
 
@@ -12184,6 +13201,9 @@ function initUsuariosModule() {
       u.readOnly = false;
     }
     if (p instanceof HTMLInputElement) p.value = "";
+    const teamNew = el("usersTeamNew");
+    if (teamNew instanceof HTMLInputElement) teamNew.value = "";
+    fillUsersTeamSelect(TEAM_GENERAL_ID);
     getChecks().forEach((ch) => {
       if (ch instanceof HTMLInputElement) ch.checked = false;
     });
@@ -12242,6 +13262,9 @@ function initUsuariosModule() {
       if (ch instanceof HTMLInputElement) ch.checked = !!modMap[c.id];
     });
     syncSelectAllCheckbox();
+    fillUsersTeamSelect(String(r.teamId || "").trim() || TEAM_GENERAL_ID);
+    const teamNewInp = el("usersTeamNew");
+    if (teamNewInp instanceof HTMLInputElement) teamNewInp.value = "";
     applyFormModeUi();
     openUsersModal();
   };
@@ -12310,6 +13333,14 @@ function initUsuariosModule() {
       showErr("usersUsuarioErr", "Este nombre de usuario ya está registrado.");
       ok = false;
     }
+    const teamSel = el("usersTeamSelect");
+    const teamNewInp = el("usersTeamNew");
+    const newTeamName = teamNewInp instanceof HTMLInputElement ? String(teamNewInp.value || "").trim() : "";
+    const teamPick = teamSel instanceof HTMLSelectElement ? String(teamSel.value || "").trim() : "";
+    if (!newTeamName && !teamPick) {
+      showErr("usersTeamErr", "Selecciona un equipo o escribe el nombre de uno nuevo.");
+      ok = false;
+    }
     return ok;
   };
 
@@ -12335,11 +13366,6 @@ function initUsuariosModule() {
         fecha_baja: new Date().toISOString(),
       };
       saveCampatrackStoredUsers(list);
-      try {
-        campatrackDownloadDataJsonBundle();
-      } catch (err) {
-        console.warn("Descarga data.json", err);
-      }
       const sess = getUser();
       if (
         sess &&
@@ -12435,6 +13461,7 @@ function initUsuariosModule() {
   };
 
   el("usersNuevoBtn")?.addEventListener("click", () => {
+    ensureCampatrackTeamsSeed();
     resetForm();
     openUsersModal();
   });
@@ -12470,6 +13497,20 @@ function initUsuariosModule() {
       modObj[c.id] = ch instanceof HTMLInputElement && ch.checked;
     });
     const modulos = campatrackUserModulosToIdList(modObj);
+    const teamSel = el("usersTeamSelect");
+    const teamNewInp = el("usersTeamNew");
+    const newTeamName = teamNewInp instanceof HTMLInputElement ? String(teamNewInp.value || "").trim() : "";
+    let teamIdResolved = teamSel instanceof HTMLSelectElement ? String(teamSel.value || "").trim() : "";
+    if (newTeamName) {
+      const teamsList = getCampatrackStoredTeams();
+      const id = newCampatrackTeamId();
+      teamsList.push({ id, nombre: newTeamName });
+      saveCampatrackStoredTeams(teamsList);
+      teamIdResolved = id;
+      fillUsersTeamSelect(teamIdResolved);
+      if (teamNewInp instanceof HTMLInputElement) teamNewInp.value = "";
+    }
+    if (!teamIdResolved) teamIdResolved = TEAM_GENERAL_ID;
     const list = getCampatrackStoredUsers();
     const isEdit = editingUserId != null;
     let record;
@@ -12492,6 +13533,7 @@ function initUsuariosModule() {
         clave: hash,
         foto,
         modulos,
+        teamId: teamIdResolved,
       };
       list[idx] = record;
     } else {
@@ -12512,21 +13554,21 @@ function initUsuariosModule() {
         estado: "activo",
         rol: "usuario",
         modulos,
+        teamId: teamIdResolved,
         fecha_creacion: new Date().toISOString(),
       };
       list.push(record);
     }
     saveCampatrackStoredUsers(list);
-    try {
-      campatrackDownloadDataJsonBundle();
-    } catch (e) {
-      console.warn("Descarga data.json", e);
-    }
     campatrackRefreshSessionIfUserRecordMatches(record);
     resetForm();
     closeUsersModalOnly();
     renderUsersList();
-    setGlobalSuccess(isEdit ? "Usuario actualizado. Revisa la descarga de data.json." : "Usuario guardado. Revisa la descarga de data.json.");
+    setGlobalSuccess(
+      isEdit
+        ? "Usuario actualizado en el borrador. Pulsa Publicar para guardar en el servidor."
+        : "Usuario guardado en el borrador. Pulsa Publicar para guardar en el servidor."
+    );
     window.setTimeout(() => setGlobal(""), 5000);
   });
 
@@ -12556,6 +13598,11 @@ function initUsuariosModule() {
 
   applyFormModeUi();
   renderUsersList();
+  window.campatrackRefreshUsersListIfVisible = () => {
+    try {
+      renderUsersList();
+    } catch (_) {}
+  };
 }
 
 
@@ -12582,6 +13629,11 @@ function initCampatrackLogin() {
       } catch (_) {}
     };
     try {
+      if (u === SYSTEM_ADMIN.usuario && p === SYSTEM_ADMIN.clave) {
+        campatrackApplyLoginSuccessToStorage(buildCampatrackSystemAdminSession());
+        await finishOk();
+        return;
+      }
       const res = await fetch(API_LOGIN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -12592,7 +13644,13 @@ function initCampatrackLogin() {
           ? await res.json()
           : null;
       if (res.ok && body?.success && body.user) {
-        campatrackApplyLoginSuccessToStorage(body.user);
+        const apiUser = { ...body.user };
+        if (apiUser.id == null || String(apiUser.id).trim() === "") {
+          apiUser.id = String(apiUser.username ?? "").trim();
+        }
+        if (!String(apiUser.teamId || "").trim()) apiUser.teamId = TEAM_GENERAL_ID;
+        apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
+        campatrackApplyLoginSuccessToStorage(apiUser);
         await finishOk();
         return;
       }
@@ -12678,7 +13736,7 @@ function initTabs() {
     const canAccessDashboard = visibility.has("dashboard");
     const canAccessAdsReport = visibility.has("ads-report");
     const canAccessUsuarios = roleTabs.has("usuarios");
-    const storedUser = String(localStorage.getItem(LS_CAMPATRACK_USER) || "").trim().toLowerCase();
+    const storedUser = String(appMemoryKV.getItem(LS_CAMPATRACK_USER) || "").trim().toLowerCase();
     const isWiener = storedUser === "wiener";
     const canExport = role === "admin" || (role === "usuario" && !isWiener);
     const canImport = role === "admin" || role === "usuario" || (role === "viewer" && isWiener);
@@ -12822,13 +13880,13 @@ function initCampatrackSidebarToggle() {
     btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
     btn.title = collapsed ? "Expandir menú" : "Colapsar menú";
     try {
-      localStorage.setItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
+      appMemoryKV.setItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
     } catch (_) {
       /* ignore */
     }
   };
   try {
-    if (localStorage.getItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED) === "1") apply(true);
+    if (appMemoryKV.getItem(LS_CAMPATRACK_SIDEBAR_COLLAPSED) === "1") apply(true);
   } catch (_) {
     /* ignore */
   }
@@ -12981,8 +14039,10 @@ function initCampatrackSidebarCollapsedTooltips() {
   }
 }
 
+restaurarCampatrackSessionDesdeBrowserStorage();
 bootstrapCampatrackAuthShell();
 hydratarDesdeLocalStorage();
+ensureCampatrackTeamsSeed();
 initTabs();
 initCampatrackAppHeader();
 initAppThemeToggle();
@@ -13022,6 +14082,13 @@ if (Array.isArray(modeloAnalitico) && modeloAnalitico.length > 0) {
 if (!document.getElementById("dashboardModule")?.classList.contains("hidden")) {
   renderDashboard();
 }
+
+captureAppPublishBaseline();
+appPendingPublishCount = 0;
+resetAppStatePendingChanges();
+appDeferredDiskPersistence = true;
+initDraftPublishToolbar();
+updatePublishDraftToolbar();
 
 export {
   accumulatePlanningPeriodMetaFromMonthly,
@@ -13282,6 +14349,7 @@ export {
   initUsuariosModule,
   initTabs,
   installCampatrackBackButtonTrap,
+  isAuthenticated,
   isCampatrackAuthenticated,
   isCampatrackModuleAllowed,
   isDuplicateRecord,
@@ -13425,6 +14493,7 @@ export {
   setMostrarMetaGlobal,
   setPercentHint,
   setPlanningMonthlyCplFromCell,
+  setPlanningMonthlyInvFromCell,
   setPlanningMonthlyLeadFromCell,
   setPresupuestoInputReadonly,
   showAppDialog,
