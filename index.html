@@ -4,40 +4,122 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CampaTrack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="loginScreen" class="campatrack-login" role="dialog" aria-modal="true" aria-labelledby="campatrackLoginFormHeading">
-    <div class="campatrack-login-bg">
-      <div class="campatrack-login-card">
-        <div class="campatrack-login-split">
-          <aside class="campatrack-login-brand" aria-label="Branding CampaTrack">
-            <div class="campatrack-login-brand-inner">
-              <img class="campatrack-login-logo" src="assets/campatrack-logo.png" alt="CampaTrack" width="320" height="120" />
-              <p class="campatrack-login-tagline">Control total de tus campañas</p>
-            </div>
-          </aside>
-          <section class="campatrack-login-panel" id="campatrackLoginFormCard" aria-label="Iniciar sesión">
-            <h2 id="campatrackLoginFormHeading" class="campatrack-login-form-heading">Acceso</h2>
-            <form id="campatrackLoginForm" class="campatrack-login-form" novalidate>
-              <label class="campatrack-login-field">
-                <span class="campatrack-login-label">Usuario</span>
-                <input id="campatrackUser" name="username" type="text" autocomplete="username" required class="campatrack-login-input" />
-              </label>
-              <label class="campatrack-login-field">
-                <span class="campatrack-login-label">Contraseña</span>
-                <input id="campatrackPass" name="password" type="password" autocomplete="current-password" required class="campatrack-login-input" />
-              </label>
-              <p id="campatrackLoginError" class="campatrack-login-error hidden" role="alert">Credenciales incorrectas</p>
-              <button type="submit" class="campatrack-login-submit">Iniciar sesión</button>
-            </form>
-          </section>
+    <div class="campatrack-login-page">
+      <div class="campatrack-login-page-bg" aria-hidden="true"></div>
+      <div class="campatrack-login-frame">
+        <div class="campatrack-login-card campatrack-login-card--elevated">
+          <div class="campatrack-login-split">
+            <aside class="campatrack-login-brand" aria-label="Branding CampaTrack">
+              <div class="campatrack-login-brand-glow" aria-hidden="true"></div>
+              <div class="campatrack-login-brand-inner">
+                <div class="campatrack-login-brand-logo-wrap campatrack-login-reveal campatrack-login-reveal--1">
+                  <img class="campatrack-login-logo" src="assets/campatrack-logo.png" alt="CampaTrack" width="320" height="120" />
+                </div>
+                <h1 class="campatrack-login-headline campatrack-login-reveal campatrack-login-reveal--2">Control total de tus campañas</h1>
+                <p class="campatrack-login-subline campatrack-login-reveal campatrack-login-reveal--3">
+                  Planifica, ejecuta y analiza en un solo lugar. Toma decisiones con datos claros y seguimiento en tiempo real.
+                </p>
+                <div class="campatrack-login-hero campatrack-login-reveal campatrack-login-reveal--4" aria-hidden="true">
+                  <div class="campatrack-login-laptop">
+                    <div class="campatrack-login-laptop-screen">
+                      <div class="campatrack-login-chart campatrack-login-chart--bars"></div>
+                      <div class="campatrack-login-chart campatrack-login-chart--line"></div>
+                      <div class="campatrack-login-chart campatrack-login-chart--donut"></div>
+                    </div>
+                    <div class="campatrack-login-laptop-base"></div>
+                  </div>
+                  <div class="campatrack-login-float-card campatrack-login-float-card--a">
+                    <i class="fa-solid fa-wallet" aria-hidden="true"></i>
+                    <span>Inversión total</span>
+                    <strong>$4,650,915</strong>
+                  </div>
+                  <div class="campatrack-login-float-card campatrack-login-float-card--b">
+                    <i class="fa-solid fa-chart-line" aria-hidden="true"></i>
+                    <span>CTR promedio</span>
+                    <strong>0.80%</strong>
+                  </div>
+                  <div class="campatrack-login-float-card campatrack-login-float-card--c">
+                    <i class="fa-solid fa-user-group" aria-hidden="true"></i>
+                    <span>Leads generados</span>
+                    <strong>9,171</strong>
+                  </div>
+                </div>
+              </div>
+            </aside>
+            <section class="campatrack-login-panel" id="campatrackLoginFormCard" aria-label="Iniciar sesión">
+              <div class="campatrack-login-panel-inner campatrack-login-panel-animate">
+                <header class="campatrack-login-panel-header">
+                  <h2 id="campatrackLoginFormHeading" class="campatrack-login-form-heading">Bienvenido de vuelta</h2>
+                  <p class="campatrack-login-form-sub">Inicia sesión para continuar</p>
+                </header>
+                <form id="campatrackLoginForm" class="campatrack-login-form" novalidate>
+                  <div class="campatrack-login-field">
+                    <label class="campatrack-login-label" for="campatrackUser">Usuario</label>
+                    <div class="campatrack-login-input-wrap">
+                      <span class="campatrack-login-input-ico" aria-hidden="true"><i class="fa-solid fa-user"></i></span>
+                      <input id="campatrackUser" name="username" type="text" autocomplete="username" required class="campatrack-login-input" placeholder="Ingresa tu usuario" />
+                    </div>
+                  </div>
+                  <div class="campatrack-login-field">
+                    <label class="campatrack-login-label" for="campatrackPass">Contraseña</label>
+                    <div class="campatrack-login-input-wrap">
+                      <span class="campatrack-login-input-ico" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
+                      <input id="campatrackPass" name="password" type="password" autocomplete="current-password" required class="campatrack-login-input campatrack-login-input--has-toggle" placeholder="Ingresa tu contraseña" />
+                      <button type="button" class="campatrack-login-pass-toggle" id="campatrackPassToggle" aria-label="Mostrar contraseña" aria-pressed="false" tabindex="0">
+                        <i class="fa-regular fa-eye" aria-hidden="true"></i>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="campatrack-login-row-meta">
+                    <label class="campatrack-login-check">
+                      <input type="checkbox" id="campatrackLoginRemember" name="remember" />
+                      <span>Recordarme</span>
+                    </label>
+                    <a href="#" class="campatrack-login-link" id="campatrackLoginForgot">¿Olvidaste tu contraseña?</a>
+                  </div>
+                  <p id="campatrackLoginError" class="campatrack-login-error hidden" role="alert">Credenciales incorrectas</p>
+                  <button type="submit" class="campatrack-login-submit">
+                    <span>Iniciar sesión</span>
+                    <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                  </button>
+                  <div class="campatrack-login-divider">
+                    <span>o continúa con</span>
+                  </div>
+                  <button type="button" class="campatrack-login-sso" id="campatrackLoginSso">
+                    <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                    <span>Iniciar sesión con SSO</span>
+                  </button>
+                </form>
+              </div>
+            </section>
+          </div>
         </div>
+        <p class="campatrack-login-security-note">
+          <i class="fa-solid fa-lock" aria-hidden="true"></i>
+          Tu información está protegida con encriptación SSL
+        </p>
+        <footer class="footer-login">© 2026 CampaTrack · Elaborado por Ricardo Gonzales</footer>
       </div>
     </div>
-    <footer class="footer-login">Elaborado por Ricardo Gonzales</footer>
+  </div>
+
+  <div id="appDialogOverlay" class="app-dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="appDialogMessage">
+    <div class="app-dialog" role="document">
+      <p id="appDialogMessage" class="app-dialog-message"></p>
+      <div class="app-dialog-actions">
+        <button type="button" id="appDialogPrimary" class="app-dialog-btn app-dialog-btn-primary"></button>
+        <button type="button" id="appDialogSecondary" class="app-dialog-btn app-dialog-btn-secondary"></button>
+      </div>
+    </div>
   </div>
 
   <div id="mainAppShell" class="hidden campatrack-app-shell">
@@ -404,49 +486,143 @@
     </div>
   </section>
 
-  <section id="bitacoraModule" class="hidden" aria-label="Módulo Bitácora">
-    <div class="data-wrap">
-      <h2 class="data-title">BITÁCORA</h2>
-      <p class="data-subtitle">Registro rápido de cambios con edición directa en tabla.</p>
-      <div class="bitacora-filtros">
-        <label class="bitacora-filtro-field bitacora-filtro-tipo">
-          <span class="bitacora-filtro-title">Tipo</span>
-          <select id="bitacoraFiltroTipo" class="filtro-tipo" aria-label="Filtrar bitácora por tipo">
-            <option value="">Todos</option>
-          </select>
-        </label>
-        <label class="bitacora-filtro-field bitacora-filtro-programa">
-          <span class="bitacora-filtro-title">Programa</span>
-          <input id="bitacoraFiltroPrograma" type="search" placeholder="Buscar programa..." autocomplete="off">
-        </label>
-        <div class="bitacora-filtro-field bitacora-filtro-rango">
-          <span class="bitacora-filtro-title">Rango de fechas</span>
-          <div class="bitacora-rango-inline">
-            <input id="bitacoraFechaRango" type="text" aria-label="Rango de fechas bitácora" placeholder="2026-04-08 → 2026-04-21">
-            <button id="bitacoraAplicarRangoBtn" type="button" class="btn-toolbar btn-primary">Aplicar</button>
+  <section id="bitacoraModule" class="hidden bitacora-saas" aria-label="Módulo Bitácora">
+    <div class="bitacora-saas-wrap">
+      <header class="bitacora-saas-hero" aria-labelledby="bitacoraHeroTitle">
+        <div class="bitacora-saas-hero-text">
+          <h2 id="bitacoraHeroTitle" class="bitacora-saas-hero-title">Bitácora</h2>
+          <p class="bitacora-saas-hero-sub">Registra y consulta los cambios y mejoras realizadas en tus campañas.</p>
+          <div class="bitacora-saas-hero-card" role="note">
+            <span class="bitacora-saas-hero-card-ico" aria-hidden="true"><i class="fa-solid fa-book"></i></span>
+            <div>
+              <p class="bitacora-saas-hero-card-title">Historial de cambios de campañas</p>
+              <p class="bitacora-saas-hero-card-desc">Documenta decisiones, pruebas y ajustes para mantener al equipo alineado.</p>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="data-actions">
-        <button id="bitacoraAddRowBtn" type="button" class="btn-toolbar btn-primary">+ Nueva fila</button>
-      </div>
-      <div class="table-card" aria-label="Tabla de bitácora">
-        <div class="bitacora-table-wrap" role="region" aria-label="Tabla editable de bitácora con scroll">
-          <table class="data-table bitacora-table tabla-bitacora">
-            <thead>
-              <tr>
-                <th class="col-fecha">Fecha</th>
-                <th class="col-tipo">Tipo</th>
-                <th class="col-programa">Programa</th>
-                <th class="col-cambios">Cambios</th>
-                <th class="col-observaciones">Observaciones</th>
-                <th class="col-eliminar">Eliminar</th>
-              </tr>
-            </thead>
-            <tbody id="bitacoraBody"></tbody>
-          </table>
+        <div class="bitacora-saas-hero-art" aria-hidden="true">
+          <div class="bitacora-saas-clipboard">
+            <div class="bitacora-saas-clipboard-top"></div>
+            <ul class="bitacora-saas-clipboard-lines">
+              <li></li><li></li><li></li><li></li>
+            </ul>
+            <div class="bitacora-saas-clipboard-pen"></div>
+          </div>
         </div>
-      </div>
+      </header>
+
+      <section class="bitacora-saas-card bitacora-saas-new" aria-labelledby="bitacoraNewHeading">
+        <div class="bitacora-saas-card-head">
+          <h3 id="bitacoraNewHeading" class="bitacora-saas-section-title">Nueva entrada</h3>
+          <span id="bitacoraFormModeLabel" class="bitacora-saas-mode-label hidden">Editando entrada</span>
+        </div>
+        <div class="bitacora-saas-form-grid">
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Fecha y hora</span>
+            <input id="bitacoraFormFecha" class="bitacora-saas-input" type="datetime-local" autocomplete="off" />
+          </label>
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Programa / campaña</span>
+            <select id="bitacoraFormPrograma" class="bitacora-saas-input bitacora-saas-select" aria-label="Programa o campaña"></select>
+          </label>
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Tipo de cambio</span>
+            <select id="bitacoraFormTipo" class="bitacora-saas-input bitacora-saas-select" aria-label="Tipo de cambio"></select>
+          </label>
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Impacto esperado <span class="bitacora-saas-optional">(opcional)</span></span>
+            <select id="bitacoraFormImpacto" class="bitacora-saas-input bitacora-saas-select" aria-label="Impacto esperado">
+              <option value="">Sin especificar</option>
+              <option value="alto">Alto</option>
+              <option value="medio">Medio</option>
+              <option value="bajo">Bajo</option>
+            </select>
+          </label>
+          <label class="bitacora-saas-field bitacora-saas-field-span2">
+            <span class="bitacora-saas-label">Cambio / mejora realizada</span>
+            <textarea id="bitacoraFormCambios" class="bitacora-saas-textarea" rows="5" maxlength="1000" placeholder="Describe el cambio, la hipótesis o el resultado esperado…"></textarea>
+            <span id="bitacoraFormCharCount" class="bitacora-saas-char-count" aria-live="polite">0 / 1000</span>
+          </label>
+        </div>
+        <div class="bitacora-saas-form-actions">
+          <label class="bitacora-saas-switch">
+            <input type="checkbox" id="bitacoraFormImportante" />
+            <span class="bitacora-saas-switch-track" aria-hidden="true"></span>
+            <span class="bitacora-saas-switch-label"><i class="fa-solid fa-star" aria-hidden="true"></i> Marcar como importante</span>
+          </label>
+          <div class="bitacora-saas-form-actions-btns">
+            <button type="button" id="bitacoraCancelarEdicionBtn" class="bitacora-saas-btn bitacora-saas-btn--ghost hidden">Cancelar edición</button>
+            <button type="button" id="bitacoraGuardarEntradaBtn" class="bitacora-saas-btn bitacora-saas-btn--primary">
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+              <span id="bitacoraGuardarEntradaLabel">Guardar entrada</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="bitacora-saas-card bitacora-saas-filters" aria-label="Filtros y búsqueda">
+        <div class="bitacora-saas-filters-grid">
+          <label class="bitacora-saas-field bitacora-saas-field-search">
+            <span class="bitacora-saas-label">Búsqueda</span>
+            <span class="bitacora-saas-search-wrap">
+              <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+              <input id="bitacoraBusquedaInput" class="bitacora-saas-input bitacora-saas-input-search" type="search" placeholder="Buscar en título, programa, tipo o descripción…" autocomplete="off" />
+            </span>
+          </label>
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Programa</span>
+            <input id="bitacoraFiltroPrograma" class="bitacora-saas-input" type="search" placeholder="Filtrar por programa…" autocomplete="off" />
+          </label>
+          <label class="bitacora-saas-field">
+            <span class="bitacora-saas-label">Tipo</span>
+            <select id="bitacoraFiltroTipo" class="bitacora-saas-input bitacora-saas-select" aria-label="Filtrar bitácora por tipo">
+              <option value="">Todos</option>
+            </select>
+          </label>
+          <div class="bitacora-saas-field bitacora-saas-field-range">
+            <span class="bitacora-saas-label">Rango de fechas</span>
+            <div class="bitacora-saas-range-row">
+              <input id="bitacoraFechaRango" class="bitacora-saas-input" type="text" aria-label="Rango de fechas bitácora" placeholder="Selecciona rango" />
+              <button id="bitacoraAplicarRangoBtn" type="button" class="bitacora-saas-btn bitacora-saas-btn--secondary">Aplicar</button>
+            </div>
+          </div>
+          <div class="bitacora-saas-field bitacora-saas-field-actions">
+            <span class="bitacora-saas-label bitacora-saas-label--phantom" aria-hidden="true">Acciones</span>
+            <div class="bitacora-saas-inline-btns">
+              <button type="button" id="bitacoraLimpiarFiltrosBtn" class="bitacora-saas-btn bitacora-saas-btn--ghost">Limpiar filtros</button>
+              <button type="button" id="bitacoraExportBtn" class="bitacora-saas-btn bitacora-saas-btn--secondary">
+                <i class="fa-solid fa-download" aria-hidden="true"></i> Exportar
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bitacora-saas-history" aria-labelledby="bitacoraHistHeading">
+        <div class="bitacora-saas-history-head">
+          <h3 id="bitacoraHistHeading" class="bitacora-saas-section-title">Historial de entradas</h3>
+          <label class="bitacora-saas-sort">
+            <span class="visually-hidden">Orden</span>
+            <select id="bitacoraOrdenSelect" class="bitacora-saas-input bitacora-saas-select bitacora-saas-select-compact" aria-label="Ordenar entradas">
+              <option value="recientes">Más recientes primero</option>
+              <option value="antiguos">Más antiguos primero</option>
+            </select>
+          </label>
+        </div>
+        <div id="bitacoraTimelineList" class="bitacora-timeline" role="feed" aria-label="Lista de entradas de bitácora"></div>
+        <footer class="bitacora-saas-pagination" aria-label="Paginación">
+          <p id="bitacoraPaginationInfo" class="bitacora-saas-pagination-info">Mostrando 0 de 0 entradas</p>
+          <nav id="bitacoraPaginationNav" class="bitacora-saas-pagination-nav" aria-label="Páginas"></nav>
+          <label class="bitacora-saas-page-size">
+            <span>Registros por página</span>
+            <select id="bitacoraPageSizeSelect" class="bitacora-saas-input bitacora-saas-select bitacora-saas-select-compact">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+        </footer>
+      </section>
     </div>
   </section>
 
@@ -1288,7 +1464,7 @@
                       <input id="usersClave" class="users-input users-input--password" type="password" autocomplete="new-password" minlength="8" placeholder="Ingresa la contraseña" />
                       <button type="button" id="usersClaveToggle" class="users-password-toggle" aria-label="Mostrar contraseña"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>
                     </div>
-                    <p id="usersClaveEditHint" class="users-field-hint hidden">Si no deseas cambiar la contraseña, deja este campo en blanco.</p>
+                    <p id="usersClaveEditHint" class="users-field-hint hidden">Si no deseas cambiar la contraseña, deja este campo en blanco. Si el usuario se creó o actualizó desde aquí, se muestra la última clave guardada para consulta del administrador (no es el hash de seguridad).</p>
                     <p class="users-field-hint users-clave-hint-new users-clave-hint-accent">Mínimo 8 caracteres.</p>
                     <p id="usersClaveErr" class="users-field-error hidden" role="alert"></p>
                   </div>
@@ -1462,16 +1638,6 @@
           <button id="saveMedidaBtn" type="submit" class="btn-toolbar btn-primary">Guardar</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="appDialogOverlay" class="app-dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="appDialogMessage">
-    <div class="app-dialog" role="document">
-      <p id="appDialogMessage" class="app-dialog-message"></p>
-      <div class="app-dialog-actions">
-        <button type="button" id="appDialogPrimary" class="app-dialog-btn app-dialog-btn-primary"></button>
-        <button type="button" id="appDialogSecondary" class="app-dialog-btn app-dialog-btn-secondary"></button>
-      </div>
     </div>
   </div>
 

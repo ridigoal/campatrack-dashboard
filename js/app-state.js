@@ -1,6 +1,6 @@
 /**
- * Estado central: Planning y Data general viven en `dataDraft`.
- * El resto del bundle sigue en `_app.impl.js` / appMemoryKV.
+ * Estado central: planning, data general, relaciones, centros de costo, bitácora, modelo y usuarios
+ * viven en `dataDraft`; publicación envía el bundle a la API (sin depender de appMemoryKV para esas piezas).
  */
 
 export const appState = {
@@ -47,6 +47,13 @@ export function ensureRelacionesDraftShape() {
   return appState.dataDraft.relaciones;
 }
 
+/** Usuarios CampaTrack (lista en `dataDraft`, misma clave que el bundle API `campatrack_users_db`). */
+export function ensureCampatrackUsersDraftShape() {
+  if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
+  if (!Array.isArray(appState.dataDraft.campatrack_users_db)) appState.dataDraft.campatrack_users_db = [];
+  return appState.dataDraft.campatrack_users_db;
+}
+
 export function getPlanningRecordIdSeq() {
   return ensurePlanningDraftShape().recordIdSeq;
 }
@@ -76,7 +83,7 @@ function normalizePlanningSliceFromBundle(planningData) {
 
 /**
  * Rellena `dataOriginal` / `dataDraft` y planning / data_general / relaciones desde un bundle (p. ej. GET /api/data).
- * No toca appMemoryKV: eso sigue haciendo `_app.impl.js`.
+ * Tras esto, `_app.impl.js` sincroniza planning, centros de costo, bitácora, modelo y usuarios desde `dataDraft` vía hooks globales.
  *
  * Para no pisar borradores locales hasta publicar/descartar, `cargarDataDesdeBackend` omita esta función
  * mientras hay cambios pendientes (`appPendingPublishCount`).
@@ -131,10 +138,39 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
     appState.dataDraft.relaciones = [];
   }
 
+  if (
+    !Object.prototype.hasOwnProperty.call(bundle, "campatrack_users_db") ||
+    !Array.isArray(bundle.campatrack_users_db)
+  ) {
+    appState.dataDraft.campatrack_users_db = [];
+  }
+  if (!Array.isArray(appState.dataDraft.campatrack_users_db)) appState.dataDraft.campatrack_users_db = [];
+
   console.log("Relaciones después de hydrate:", appState.dataDraft.relaciones);
   try {
     if (typeof globalThis.__campatrackRebuildRelacionesTable === "function") {
       globalThis.__campatrackRebuildRelacionesTable();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (typeof globalThis.__campatrackSyncCcBitacoraModeloAfterHydrate === "function") {
+      globalThis.__campatrackSyncCcBitacoraModeloAfterHydrate();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (typeof globalThis.__campatrackRenderBitacoraAfterHydrate === "function") {
+      globalThis.__campatrackRenderBitacoraAfterHydrate();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (typeof globalThis.__campatrackUsersAfterHydrate === "function") {
+      globalThis.__campatrackUsersAfterHydrate();
     }
   } catch (_) {
     /* ignore */
@@ -161,6 +197,7 @@ export async function initAppState(options = {}) {
     ensurePlanningDraftShape();
     ensureDataGeneralDraftShape();
     ensureRelacionesDraftShape();
+    ensureCampatrackUsersDraftShape();
     return;
   }
   let bundle = row.data;

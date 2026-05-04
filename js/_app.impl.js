@@ -3,6 +3,7 @@ import {
   ensurePlanningDraftShape,
   ensureDataGeneralDraftShape,
   ensureRelacionesDraftShape,
+  ensureCampatrackUsersDraftShape,
   getPlanningRecordIdSeq,
   setPlanningRecordIdSeq,
   bumpAppStatePendingChanges,
@@ -106,12 +107,29 @@ const endDateInput = document.getElementById("endDate");
 const totalBudgetInput = document.getElementById("totalBudget");
 const gastoDiarioInput = document.getElementById("gastoDiario");
 const targetLeadsInput = document.getElementById("targetLeads");
-const bitacoraBody = document.getElementById("bitacoraBody");
-const bitacoraAddRowBtn = document.getElementById("bitacoraAddRowBtn");
+const bitacoraTimelineList = document.getElementById("bitacoraTimelineList");
 const bitacoraFiltroTipoSelect = document.getElementById("bitacoraFiltroTipo");
 const bitacoraFiltroProgramaInput = document.getElementById("bitacoraFiltroPrograma");
 const bitacoraFechaRangoInput = document.getElementById("bitacoraFechaRango");
 const bitacoraAplicarRangoBtn = document.getElementById("bitacoraAplicarRangoBtn");
+const bitacoraBusquedaInput = document.getElementById("bitacoraBusquedaInput");
+const bitacoraLimpiarFiltrosBtn = document.getElementById("bitacoraLimpiarFiltrosBtn");
+const bitacoraExportBtn = document.getElementById("bitacoraExportBtn");
+const bitacoraOrdenSelect = document.getElementById("bitacoraOrdenSelect");
+const bitacoraPageSizeSelect = document.getElementById("bitacoraPageSizeSelect");
+const bitacoraPaginationInfo = document.getElementById("bitacoraPaginationInfo");
+const bitacoraPaginationNav = document.getElementById("bitacoraPaginationNav");
+const bitacoraFormFecha = document.getElementById("bitacoraFormFecha");
+const bitacoraFormPrograma = document.getElementById("bitacoraFormPrograma");
+const bitacoraFormTipo = document.getElementById("bitacoraFormTipo");
+const bitacoraFormImpacto = document.getElementById("bitacoraFormImpacto");
+const bitacoraFormCambios = document.getElementById("bitacoraFormCambios");
+const bitacoraFormImportante = document.getElementById("bitacoraFormImportante");
+const bitacoraFormCharCount = document.getElementById("bitacoraFormCharCount");
+const bitacoraGuardarEntradaBtn = document.getElementById("bitacoraGuardarEntradaBtn");
+const bitacoraGuardarEntradaLabel = document.getElementById("bitacoraGuardarEntradaLabel");
+const bitacoraCancelarEdicionBtn = document.getElementById("bitacoraCancelarEdicionBtn");
+const bitacoraFormModeLabel = document.getElementById("bitacoraFormModeLabel");
 /** Rango del toolbar Planning (filtro por solape de fechas) */
 let planningFechaRangoPicker = null;
 let planningFilterFechaIni = "";
@@ -125,15 +143,17 @@ function planningDraftRecords() {
 let selectedRecordId = null;
 let editingRecordId = null;
 const bitacoraData = [];
-let bitacoraEditSession = null;
-let pendingBitacoraFocus = null;
 let bitacoraFechaRangoPicker = null;
+let bitacoraEditingId = null;
+let bitacoraPageIndex = 1;
 const bitacoraFiltros = {
   tipo: "",
   programa: "",
   fechaInicio: "",
-  fechaFin: ""
+  fechaFin: "",
+  busqueda: ""
 };
+const BITACORA_CAMBIOS_MAX = 1000;
 
 /** Catálogo dinámico persistido en `catalogos_sistema` (tipos, programas, tracking, plataformas, intakes). */
 let catalogosSistema = {
@@ -601,7 +621,6 @@ function mergeConsumoForPersist() {
   Object.assign(out, consumoPorCampaña);
   return out;
 }
-const BITACORA_FIELDS = ["fecha", "tipo", "programa", "cambios", "observaciones"];
 const BITACORA_TIPO_OPTIONS = ["MA", "SE", "PE", "MBA", "DI", "DO", "Charla", "Webinar", "Alcance"];
 
 /** Semillas alineadas con opciones base del HTML (planning); el catálogo en localStorage las amplía con el uso. */
@@ -610,14 +629,66 @@ const CATALOGO_SEMILLA_TRACKING = ["Leadgen", "Pixel"];
 const CATALOGO_SEMILLA_PLATAFORMAS = ["Meta", "Google", "TikTok", "LinkedIn"];
 const CATALOGO_SEMILLA_INTAKES = ["Intake 1", "Intake 2", "Intake 3", "Intake 4"];
 
-function persistCentrosCostos() {
-  if (!shouldDeferDiskPersistence()) {
-    try {
-      appMemoryKV.setItem(LS_CC_DATA, JSON.stringify({ centros: centrosCostos, seq: centroCostoIdSeq }));
-      appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
-    } catch (err) {
-      console.warn("No se pudo guardar cc_data", err);
+/** CC, bitácora y modelo en `appState.dataDraft` (misma idea que planning); no appMemoryKV. */
+function syncCcBitacoraModeloDraftFromRuntime() {
+  if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
+  appState.dataDraft.cc_data = {
+    centros: JSON.parse(JSON.stringify(centrosCostos)),
+    seq: centroCostoIdSeq
+  };
+  appState.dataDraft.bitacora_data = JSON.parse(JSON.stringify(bitacoraData));
+  const modeloSer = serializeModelo(modeloMergedCache || modeloAnalitico);
+  appState.dataDraft.modelo = modeloSer;
+  appState.dataDraft.modeloAnalitico = modeloSer;
+  appState.dataDraft.campatrack_users_db = JSON.parse(JSON.stringify(ensureCampatrackUsersDraftShape()));
+}
+
+function applyCcBitacoraModeloRuntimeFromDraftOrBundle(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return;
+  if (source.cc_data && typeof source.cc_data === "object" && Array.isArray(source.cc_data.centros)) {
+    centrosCostos.length = 0;
+    source.cc_data.centros.forEach((r) => centrosCostos.push(normalizeCentroCostoRow(r)));
+    if (Number.isFinite(Number(source.cc_data.seq)))
+      centroCostoIdSeq = Math.max(1, Math.round(Number(source.cc_data.seq)));
+    let maxN = 0;
+    centrosCostos.forEach((r) => {
+      const m = String(r.id).match(/^cc_(\d+)$/i);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    });
+    centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN + 1);
+  }
+  if (Array.isArray(source.bitacora_data)) {
+    bitacoraData.length = 0;
+    const rows = source.bitacora_data.map((r) => normalizeBitacoraRow(r));
+    sortBitacoraRowsNewestFirst(rows);
+    rows.forEach((r) => bitacoraData.push(r));
+  }
+  if (Array.isArray(source.modelo)) {
+    const rows = deserializeModelo(source.modelo);
+    migrateMissingTeamIdOnRows(rows);
+    const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+    if (distinctTeams.size > 1) modeloMergedCache = rows;
+    else {
+      const base = Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromLegacyStorage();
+      modeloMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
     }
+    modeloAnalitico = modeloMergedCache.filter(rowBelongsToCurrentTeam);
+  }
+}
+
+function syncCcBitacoraModeloRuntimeFromDataDraftAfterHydrate() {
+  applyCcBitacoraModeloRuntimeFromDraftOrBundle(appState.dataDraft);
+}
+
+try {
+  globalThis.__campatrackSyncCcBitacoraModeloAfterHydrate = syncCcBitacoraModeloRuntimeFromDataDraftAfterHydrate;
+} catch (_) {
+  /* ignore */
+}
+
+function persistCentrosCostos() {
+  syncCcBitacoraModeloDraftFromRuntime();
+  if (!shouldDeferDiskPersistence()) {
     guardarTodo({ incluirTablasData: false });
     guardarDebounce();
   }
@@ -635,6 +706,21 @@ function persistConsumoPorCampaña() {
 
 function hydratarCentrosCostos() {
   try {
+    const fromDraft = appState.dataDraft?.cc_data;
+    if (fromDraft && typeof fromDraft === "object" && Array.isArray(fromDraft.centros)) {
+      centrosCostos.length = 0;
+      fromDraft.centros.forEach((r) => {
+        if (r && r.id != null) centrosCostos.push(normalizeCentroCostoRow(r));
+      });
+      if (Number.isFinite(Number(fromDraft.seq))) centroCostoIdSeq = Math.max(centroCostoIdSeq, Number(fromDraft.seq));
+      let maxN = 0;
+      centrosCostos.forEach((r) => {
+        const m = String(r.id).match(/^cc_(\d+)$/i);
+        if (m) maxN = Math.max(maxN, Number(m[1]));
+      });
+      centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN + 1);
+      return;
+    }
     const raw = appMemoryKV.getItem("centro_costos") || appMemoryKV.getItem(LS_CC_DATA) || appMemoryKV.getItem("centros_costos");
     if (!raw) return;
     const data = JSON.parse(raw);
@@ -1489,6 +1575,7 @@ function runWithDiskPersistenceEnabled(fn) {
 }
 
 function buildMemorySnapshotForPublish() {
+  syncCcBitacoraModeloDraftFromRuntime();
   recomputePlanningMergedCacheFromRecords();
   refreshTeamScopedDataCachesForSnapshot();
   const planningSnap = JSON.parse(JSON.stringify(planningMergedRecordsCache && planningMergedRecordsCache.length ? planningMergedRecordsCache : planningDraftRecords()));
@@ -1653,7 +1740,7 @@ function applyMemorySnapshotFromBundle(snap) {
     const distinctTeams = new Set(rows.map(normalizeRowTeamId));
     if (distinctTeams.size > 1) modeloMergedCache = rows;
     else {
-      const base = Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromDisk();
+      const base = Array.isArray(modeloMergedCache) && modeloMergedCache.length ? modeloMergedCache : readFullModeloFromLegacyStorage();
       modeloMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
     }
     modeloAnalitico = modeloMergedCache.filter(rowBelongsToCurrentTeam);
@@ -1662,12 +1749,13 @@ function applyMemorySnapshotFromBundle(snap) {
     modeloAnalitico = [];
   }
   if (Array.isArray(snap.campatrack_users_db)) {
-    campatrackUsersDraft = snap.campatrack_users_db.map((u) => (u && typeof u === "object" ? { ...u } : u));
-    if (!shouldDeferDiskPersistence()) {
-      try {
-        appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(campatrackUsersDraft));
-      } catch (_) {}
-    }
+    const uDraft = ensureCampatrackUsersDraftShape();
+    uDraft.length = 0;
+    snap.campatrack_users_db.forEach((u) => {
+      uDraft.push(u && typeof u === "object" ? { ...u } : u);
+    });
+  } else {
+    ensureCampatrackUsersDraftShape().length = 0;
   }
   const allRows = dataReal.concat(dataAdsReport, dataAnuncios);
   dataIdSeq = Math.max(1, ...allRows.map((r) => Number(r._id) || 0)) + 1;
@@ -1690,35 +1778,17 @@ function flushAllPersistedStateToDisk() {
     } catch (err) {
       console.warn("flush consumo", err);
     }
-    try {
-      appMemoryKV.setItem(LS_CC_DATA, JSON.stringify({ centros: centrosCostos, seq: centroCostoIdSeq }));
-      appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
-    } catch (err) {
-      console.warn("flush cc", err);
-    }
+    syncCcBitacoraModeloDraftFromRuntime();
     saveCatalogosSistema();
-    try {
-      appMemoryKV.setItem(LS_BITACORA_DATA, JSON.stringify(bitacoraData));
-    } catch (err) {
-      console.warn("flush bitácora", err);
-    }
     refreshTeamScopedDataCachesForSnapshot();
     guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache || dataAdsReport));
     guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios));
     guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache || campaniasUnicasData);
     guardarEnLocalStorage(LS_KEYS.medidas, medidasMergedCache || medidas);
-    guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache || modeloAnalitico));
-    guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache || modeloAnalitico));
     try {
       appMemoryKV.setItem("programas", JSON.stringify(programs));
     } catch (err) {
       console.warn("flush programas", err);
-    }
-    try {
-      hydrateCampatrackUsersDraftFromLocalStorageIfNeeded();
-      appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(Array.isArray(campatrackUsersDraft) ? campatrackUsersDraft : []));
-    } catch (err) {
-      console.warn("flush usuarios", err);
     }
     guardarTodo({ incluirTablasData: true });
   });
@@ -4643,28 +4713,76 @@ initPlanningDateRangePicker();
 // BITÁCORA module
 // =========================
 
+function bitacoraNowDatetimeLocalValue() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function createBitacoraRow() {
-  return {
+  return normalizeBitacoraRow({
     id: `bit_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-    fecha: "",
+    fecha: bitacoraNowDatetimeLocalValue(),
     tipo: "",
     programa: "",
     cambios: "",
-    observaciones: ""
-  };
+    observaciones: "",
+    titulo: "",
+    impacto: "",
+    importante: false
+  });
 }
 
 function normalizeBitacoraRow(row) {
   const rawId = String(row?.id || "").trim();
-  const safeId = /^[a-zA-Z0-9_-]+$/.test(rawId) ? rawId : createBitacoraRow().id;
+  const safeId = /^[a-zA-Z0-9_-]+$/.test(rawId)
+    ? rawId
+    : `bit_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const imp = String(row?.impacto || "")
+    .trim()
+    .toLowerCase();
+  const impactoOk = imp === "alto" || imp === "medio" || imp === "bajo" ? imp : "";
+  const impFlag = row?.importante;
+  const importante =
+    impFlag === true ||
+    impFlag === 1 ||
+    String(impFlag || "")
+      .toLowerCase()
+      .trim() === "true";
   return {
     id: safeId,
     fecha: String(row?.fecha || ""),
     tipo: String(row?.tipo || ""),
     programa: String(row?.programa || ""),
     cambios: String(row?.cambios || ""),
-    observaciones: String(row?.observaciones || "")
+    observaciones: String(row?.observaciones || ""),
+    titulo: String(row?.titulo || "").trim(),
+    impacto: impactoOk,
+    importante: Boolean(importante)
   };
+}
+
+function bitacoraRowDateYmd(row) {
+  const raw = String(row?.fecha || "").trim();
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+
+function bitacoraDisplayTitulo(row) {
+  const t = String(row?.titulo || "").trim();
+  if (t) return t;
+  const prog = String(row?.programa || "").trim();
+  const tipo = String(row?.tipo || "").trim();
+  if (prog && tipo) return `${prog} – ${tipo}`;
+  return prog || tipo || "Sin título";
+}
+
+function bitacoraImpactoLabel(code) {
+  const c = String(code || "").toLowerCase();
+  if (c === "alto") return "Alto";
+  if (c === "medio") return "Medio";
+  if (c === "bajo") return "Bajo";
+  return "";
 }
 
 function sortBitacoraRowsNewestFirst(rows) {
@@ -4677,12 +4795,8 @@ function sortBitacoraRowsNewestFirst(rows) {
 }
 
 function persistBitacoraData() {
+  syncCcBitacoraModeloDraftFromRuntime();
   if (!shouldDeferDiskPersistence()) {
-    try {
-      appMemoryKV.setItem(LS_BITACORA_DATA, JSON.stringify(bitacoraData));
-    } catch (err) {
-      console.warn("No se pudo guardar bitacora_data", err);
-    }
     guardarDebounce();
   }
   registerUnpublishedDraftMutation();
@@ -4693,6 +4807,13 @@ function persistBitacoraData() {
 function hydratarBitacoraData() {
   bitacoraData.length = 0;
   try {
+    const fromDraft = appState.dataDraft?.bitacora_data;
+    if (Array.isArray(fromDraft)) {
+      const rows = fromDraft.map(normalizeBitacoraRow);
+      sortBitacoraRowsNewestFirst(rows);
+      rows.forEach((row) => bitacoraData.push(row));
+      return;
+    }
     const raw = appMemoryKV.getItem(LS_BITACORA_DATA);
     if (!raw) return;
     const data = JSON.parse(raw);
@@ -4739,7 +4860,8 @@ function bitacoraRowPasaFiltros(row) {
   if (bitacoraFiltros.tipo && String(row?.tipo || "") !== bitacoraFiltros.tipo) return false;
   const qProg = String(bitacoraFiltros.programa || "").trim().toLowerCase();
   if (qProg && !String(row?.programa || "").toLowerCase().includes(qProg)) return false;
-  const fecha = parseDateInput(row?.fecha || "");
+  const ymd = bitacoraRowDateYmd(row);
+  const fecha = parseDateInput(ymd);
   if (bitacoraFiltros.fechaInicio) {
     const start = parseDateInput(bitacoraFiltros.fechaInicio);
     if (!fecha || !start || fecha < start) return false;
@@ -4747,6 +4869,22 @@ function bitacoraRowPasaFiltros(row) {
   if (bitacoraFiltros.fechaFin) {
     const end = parseDateInput(bitacoraFiltros.fechaFin);
     if (!fecha || !end || fecha > end) return false;
+  }
+  const qb = String(bitacoraFiltros.busqueda || "")
+    .trim()
+    .toLowerCase();
+  if (qb) {
+    const hay = [
+      bitacoraDisplayTitulo(row),
+      row?.programa,
+      row?.tipo,
+      row?.cambios,
+      row?.observaciones,
+      bitacoraImpactoLabel(row?.impacto)
+    ]
+      .map((x) => String(x || "").toLowerCase())
+      .some((t) => t.includes(qb));
+    if (!hay) return false;
   }
   return true;
 }
@@ -4760,6 +4898,7 @@ function renderBitacoraTipoSelect() {
       .map((tipo) => `<option value="${escapeHtml(tipo)}">${escapeHtml(tipo)}</option>`)
       .join("")}`;
   bitacoraFiltroTipoSelect.value = options.includes(current) ? current : "";
+  refreshBitacoraFormTipoOptions();
 }
 
 function initBitacoraDateRangePicker() {
@@ -4841,9 +4980,19 @@ function formatBitacoraRangeInputValue(start, end) {
 }
 
 function formatearFechaBitacora(fecha) {
-  const f = parseDateInput(fecha);
-  if (!f) return String(fecha || "");
-  return `${f.getDate()} ${MONTHS[f.getMonth()]} ${f.getFullYear()}`;
+  const raw = String(fecha || "").trim();
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{1,2}):(\d{2})/);
+  if (m) {
+    const d = parseDateInput(m[1]);
+    if (d) {
+      const hh = String(m[2]).padStart(2, "0");
+      const mm = String(m[3]).padStart(2, "0");
+      return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()} ${hh}:${mm}`;
+    }
+  }
+  const f = parseDateInput(raw);
+  if (!f) return raw || "";
+  return `${String(f.getDate()).padStart(2, "0")}/${String(f.getMonth() + 1).padStart(2, "0")}/${f.getFullYear()}`;
 }
 
 function formatBitacoraCellHtml(value, multiline = false) {
@@ -4857,279 +5006,327 @@ function findBitacoraRowIndex(rowId) {
   return bitacoraData.findIndex((row) => String(row.id) === String(rowId));
 }
 
-function getBitacoraFieldIndex(field) {
-  return BITACORA_FIELDS.findIndex((f) => f === field);
+function refreshBitacoraFormTipoOptions() {
+  if (!(bitacoraFormTipo instanceof HTMLSelectElement)) return;
+  const current = String(bitacoraFormTipo.value || "").trim();
+  const opts = getBitacoraTipoOptions();
+  bitacoraFormTipo.innerHTML = `<option value="">Selecciona tipo</option>${opts
+    .map((tipo) => `<option value="${escapeHtml(tipo)}">${escapeHtml(tipo)}</option>`)
+    .join("")}`;
+  bitacoraFormTipo.value = opts.includes(current) ? current : "";
 }
 
-function getNextBitacoraTargetByEnter(rowId, field) {
-  const rowIndex = findBitacoraRowIndex(rowId);
-  if (rowIndex < 0) return null;
-  if (rowIndex + 1 >= bitacoraData.length) return null;
-  return { rowId: bitacoraData[rowIndex + 1].id, field };
+function refreshBitacoraFormProgramaOptions() {
+  if (!(bitacoraFormPrograma instanceof HTMLSelectElement)) return;
+  const current = String(bitacoraFormPrograma.value || "").trim();
+  const opts = getBitacoraProgramOptions();
+  bitacoraFormPrograma.innerHTML = `<option value="">Selecciona programa</option>${opts
+    .map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`)
+    .join("")}`;
+  bitacoraFormPrograma.value = opts.includes(current) ? current : "";
 }
 
-function getNextBitacoraTargetByTab(rowId, field, reverse = false) {
-  const rowIndex = findBitacoraRowIndex(rowId);
-  const fieldIndex = getBitacoraFieldIndex(field);
-  if (rowIndex < 0 || fieldIndex < 0) return null;
-
-  if (!reverse) {
-    if (fieldIndex < BITACORA_FIELDS.length - 1) {
-      return { rowId, field: BITACORA_FIELDS[fieldIndex + 1] };
-    }
-    if (rowIndex < bitacoraData.length - 1) {
-      return { rowId: bitacoraData[rowIndex + 1].id, field: BITACORA_FIELDS[0] };
-    }
-    return null;
-  }
-
-  if (fieldIndex > 0) {
-    return { rowId, field: BITACORA_FIELDS[fieldIndex - 1] };
-  }
-  if (rowIndex > 0) {
-    return { rowId: bitacoraData[rowIndex - 1].id, field: BITACORA_FIELDS[BITACORA_FIELDS.length - 1] };
-  }
-  return null;
+function updateBitacoraCharCount() {
+  if (!(bitacoraFormCambios instanceof HTMLTextAreaElement) || !bitacoraFormCharCount) return;
+  const n = bitacoraFormCambios.value.length;
+  bitacoraFormCharCount.textContent = `${n} / ${BITACORA_CAMBIOS_MAX}`;
 }
 
-function getBitacoraCellElement(rowId, field) {
-  if (!bitacoraBody) return null;
-  const cells = bitacoraBody.querySelectorAll("td[data-bitacora-id][data-bitacora-field]");
-  for (const cell of cells) {
-    if (cell.getAttribute("data-bitacora-id") === String(rowId) && cell.getAttribute("data-bitacora-field") === String(field)) {
-      return cell;
-    }
-  }
-  return null;
+function resetBitacoraEntryForm() {
+  bitacoraEditingId = null;
+  if (bitacoraFormFecha instanceof HTMLInputElement) bitacoraFormFecha.value = bitacoraNowDatetimeLocalValue();
+  if (bitacoraFormPrograma instanceof HTMLSelectElement) bitacoraFormPrograma.value = "";
+  if (bitacoraFormTipo instanceof HTMLSelectElement) bitacoraFormTipo.value = "";
+  if (bitacoraFormImpacto instanceof HTMLSelectElement) bitacoraFormImpacto.value = "";
+  if (bitacoraFormCambios instanceof HTMLTextAreaElement) bitacoraFormCambios.value = "";
+  if (bitacoraFormImportante instanceof HTMLInputElement) bitacoraFormImportante.checked = false;
+  if (bitacoraGuardarEntradaLabel) bitacoraGuardarEntradaLabel.textContent = "Guardar entrada";
+  bitacoraCancelarEdicionBtn?.classList.add("hidden");
+  bitacoraFormModeLabel?.classList.add("hidden");
+  refreshBitacoraFormTipoOptions();
+  refreshBitacoraFormProgramaOptions();
+  updateBitacoraCharCount();
 }
 
-function commitBitacoraEditSession(saveValue, nextTarget = null) {
-  const session = bitacoraEditSession;
-  if (!session) return;
-
-  bitacoraEditSession = null;
-  if (session.cell) session.cell.classList.remove("bitacora-cell-editing");
-
-  if (saveValue) {
-    const rowIndex = findBitacoraRowIndex(session.rowId);
-    if (rowIndex >= 0) {
-      const rawValue = String(session.editor?.value ?? "");
-      let nextValue = rawValue;
-      if (session.field === "fecha" || session.field === "tipo" || session.field === "programa") {
-        nextValue = rawValue.trim();
-      } else {
-        nextValue = rawValue.replace(/\s+$/g, "");
-      }
-      bitacoraData[rowIndex][session.field] = nextValue;
-      persistBitacoraData();
-    }
+function fillBitacoraEntryFormFromRow(rowId) {
+  const idx = findBitacoraRowIndex(rowId);
+  if (idx < 0) return;
+  const row = bitacoraData[idx];
+  bitacoraEditingId = String(row.id);
+  const rawFecha = String(row.fecha || "").trim();
+  let dtVal = rawFecha;
+  if (rawFecha && !rawFecha.includes("T")) {
+    const d = parseDateInput(rawFecha);
+    if (d) dtVal = `${formatDateInputFromDate(d)}T12:00`;
   }
+  if (bitacoraFormFecha instanceof HTMLInputElement) bitacoraFormFecha.value = dtVal.slice(0, 16);
+  refreshBitacoraFormProgramaOptions();
+  refreshBitacoraFormTipoOptions();
+  if (bitacoraFormPrograma instanceof HTMLSelectElement) bitacoraFormPrograma.value = String(row.programa || "");
+  if (bitacoraFormTipo instanceof HTMLSelectElement) bitacoraFormTipo.value = String(row.tipo || "");
+  if (bitacoraFormImpacto instanceof HTMLSelectElement) bitacoraFormImpacto.value = String(row.impacto || "");
+  if (bitacoraFormCambios instanceof HTMLTextAreaElement) bitacoraFormCambios.value = String(row.cambios || "");
+  if (bitacoraFormImportante instanceof HTMLInputElement) bitacoraFormImportante.checked = Boolean(row.importante);
+  if (bitacoraGuardarEntradaLabel) bitacoraGuardarEntradaLabel.textContent = "Actualizar entrada";
+  bitacoraCancelarEdicionBtn?.classList.remove("hidden");
+  bitacoraFormModeLabel?.classList.remove("hidden");
+  updateBitacoraCharCount();
+  bitacoraFormCambios?.focus();
+}
 
-  pendingBitacoraFocus = nextTarget;
+function guardarBitacoraDesdeFormulario() {
+  if (!(bitacoraFormFecha instanceof HTMLInputElement)) return;
+  const fecha = String(bitacoraFormFecha.value || "").trim();
+  const programa = bitacoraFormPrograma instanceof HTMLSelectElement ? String(bitacoraFormPrograma.value || "").trim() : "";
+  const tipo = bitacoraFormTipo instanceof HTMLSelectElement ? String(bitacoraFormTipo.value || "").trim() : "";
+  const impacto = bitacoraFormImpacto instanceof HTMLSelectElement ? String(bitacoraFormImpacto.value || "").trim() : "";
+  const cambios = bitacoraFormCambios instanceof HTMLTextAreaElement ? String(bitacoraFormCambios.value || "") : "";
+  const importante = bitacoraFormImportante instanceof HTMLInputElement ? Boolean(bitacoraFormImportante.checked) : false;
+  if (!fecha) {
+    void showAppDialog({ message: "Indica fecha y hora de la entrada.", primaryText: "Entendido", showSecondary: false });
+    return;
+  }
+  if (!tipo) {
+    void showAppDialog({ message: "Selecciona el tipo de cambio.", primaryText: "Entendido", showSecondary: false });
+    return;
+  }
+  if (!String(cambios).trim()) {
+    void showAppDialog({ message: "Describe el cambio o mejora realizada.", primaryText: "Entendido", showSecondary: false });
+    return;
+  }
+  const titulo = programa && tipo ? `${programa} – ${tipo}` : programa || tipo || "";
+  const payload = normalizeBitacoraRow({
+    id: bitacoraEditingId || `bit_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    fecha,
+    tipo,
+    programa,
+    cambios: cambios.slice(0, BITACORA_CAMBIOS_MAX),
+    observaciones: "",
+    titulo,
+    impacto,
+    importante
+  });
+  if (bitacoraEditingId) {
+    const idx = findBitacoraRowIndex(bitacoraEditingId);
+    if (idx >= 0) {
+      const prev = bitacoraData[idx];
+      const mergedTitulo = String(prev.titulo || "").trim() || titulo;
+      bitacoraData[idx] = normalizeBitacoraRow({ ...prev, ...payload, id: prev.id, titulo: mergedTitulo });
+    }
+  } else {
+    bitacoraData.unshift(payload);
+  }
+  sortBitacoraRowsNewestFirst(bitacoraData);
+  persistBitacoraData();
+  resetBitacoraEntryForm();
+  bitacoraPageIndex = 1;
   renderBitacoraTable();
 }
 
-function createBitacoraEditorForField(field, value) {
-  if (field === "fecha") {
-    const input = document.createElement("input");
-    input.className = "bitacora-editor";
-    input.type = "date";
-    input.value = String(value || "");
-    return input;
-  }
-
-  if (field === "tipo") {
-    const select = document.createElement("select");
-    select.className = "bitacora-editor";
-    const current = String(value || "").trim();
-    const options = Array.from(
-      new Set([current, ...BITACORA_TIPO_OPTIONS, ...(catalogosSistema.tipos || [])])
-    )
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
-    select.innerHTML = `<option value=""></option>${options
-      .map((opt) => `<option value="${escapeHtml(opt)}">${escapeHtml(opt)}</option>`)
-      .join("")}`;
-    select.value = current;
-    return select;
-  }
-
-  if (field === "programa") {
-    const select = document.createElement("select");
-    select.className = "bitacora-editor";
-    const current = String(value || "").trim();
-    const options = Array.from(new Set([current, ...getBitacoraProgramOptions()])).filter(Boolean);
-    select.innerHTML = `<option value=""></option>${options
-      .map((opt) => `<option value="${escapeHtml(opt)}">${escapeHtml(opt)}</option>`)
-      .join("")}`;
-    select.value = current;
-    return select;
-  }
-
-  if (field === "cambios" || field === "observaciones") {
-    const textarea = document.createElement("textarea");
-    textarea.className = "bitacora-editor";
-    textarea.value = String(value || "");
-    textarea.rows = 3;
-    return textarea;
-  }
-
-  const input = document.createElement("input");
-  input.className = "bitacora-editor";
-  input.type = "text";
-  input.value = String(value || "");
-  return input;
+function exportarBitacoraJsonFiltrado() {
+  const rows = bitacoraData.filter(bitacoraRowPasaFiltros).map((r) => ({ ...r }));
+  const blob = new Blob([JSON.stringify({ bitacora_data: rows }, null, 2)], { type: "application/json;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `bitacora_export_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
-function activateBitacoraCellEdition(rowId, field) {
-  if (!bitacoraBody) return;
-  if (!BITACORA_FIELDS.includes(field)) return;
-
-  if (bitacoraEditSession) {
-    if (String(bitacoraEditSession.rowId) === String(rowId) && bitacoraEditSession.field === field) return;
-    commitBitacoraEditSession(true, { rowId, field });
+function renderBitacoraPagination(totalItems, pageSize) {
+  if (!bitacoraPaginationInfo || !bitacoraPaginationNav) return;
+  if (totalItems === 0) {
+    bitacoraPaginationInfo.textContent = "Sin entradas para mostrar";
+    bitacoraPaginationNav.innerHTML = "";
     return;
   }
-
-  const rowIndex = findBitacoraRowIndex(rowId);
-  if (rowIndex < 0) return;
-  const cell = getBitacoraCellElement(rowId, field);
-  if (!cell) return;
-
-  const editor = createBitacoraEditorForField(field, bitacoraData[rowIndex][field]);
-  cell.classList.add("bitacora-cell-editing");
-  cell.innerHTML = "";
-  cell.appendChild(editor);
-
-  bitacoraEditSession = { rowId, field, cell, editor };
-
-  let closed = false;
-  const closeSession = (saveValue, nextTarget = null) => {
-    if (closed) return;
-    closed = true;
-    commitBitacoraEditSession(saveValue, nextTarget);
-  };
-
-  editor.addEventListener("blur", () => closeSession(true), { once: true });
-  editor.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeSession(false);
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      closeSession(true, getNextBitacoraTargetByEnter(rowId, field));
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      closeSession(true, getNextBitacoraTargetByTab(rowId, field, event.shiftKey));
-    }
-  });
-
-  editor.focus();
-  if (editor instanceof HTMLInputElement || editor instanceof HTMLTextAreaElement) {
-    editor.select();
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (bitacoraPageIndex > totalPages) bitacoraPageIndex = totalPages;
+  const start = totalItems === 0 ? 0 : (bitacoraPageIndex - 1) * pageSize + 1;
+  const end = Math.min(bitacoraPageIndex * pageSize, totalItems);
+  bitacoraPaginationInfo.textContent =
+    totalItems === 0 ? "Sin entradas para mostrar" : `Mostrando ${start} a ${end} de ${totalItems} entradas`;
+  const frag = document.createDocumentFragment();
+  for (let p = 1; p <= totalPages; p++) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `bitacora-page-btn${p === bitacoraPageIndex ? " is-active" : ""}`;
+    btn.textContent = String(p);
+    btn.dataset.bitacoraPage = String(p);
+    frag.appendChild(btn);
   }
+  bitacoraPaginationNav.innerHTML = "";
+  bitacoraPaginationNav.appendChild(frag);
+}
+
+function ordenarBitacoraRowsParaVista(rows) {
+  const asc = bitacoraOrdenSelect instanceof HTMLSelectElement && bitacoraOrdenSelect.value === "antiguos";
+  const copy = rows.slice();
+  copy.sort((a, b) => {
+    const ta = Date.parse(String(a.fecha || "")) || 0;
+    const tb = Date.parse(String(b.fecha || "")) || 0;
+    return asc ? ta - tb : tb - ta;
+  });
+  return copy;
 }
 
 function renderBitacoraTable() {
-  if (!bitacoraBody) return;
+  if (!bitacoraTimelineList) return;
   renderBitacoraTipoSelect();
-  const rows = bitacoraData.filter(bitacoraRowPasaFiltros);
+  const filtered = bitacoraData.filter(bitacoraRowPasaFiltros);
+  const sorted = ordenarBitacoraRowsParaVista(filtered);
+  const pageSize = Math.max(1, Math.min(100, Number(bitacoraPageSizeSelect?.value) || 10));
+  const total = sorted.length;
+  renderBitacoraPagination(total, pageSize);
+  const start = (bitacoraPageIndex - 1) * pageSize;
+  const pageRows = sorted.slice(start, start + pageSize);
+
   if (!bitacoraData.length) {
-    bitacoraBody.innerHTML = `
-      <tr class="bitacora-empty">
-        <td colspan="6">Sin registros. Usa "+ Nueva fila" para iniciar.</td>
-      </tr>
-    `;
+    bitacoraTimelineList.innerHTML = `<div class="bitacora-timeline-empty">Sin entradas aún. Completa el formulario superior y pulsa <strong>Guardar entrada</strong>.</div>`;
     return;
   }
-  if (!rows.length) {
-    bitacoraBody.innerHTML = `
-      <tr class="bitacora-empty">
-        <td colspan="6">No hay registros para los filtros seleccionados.</td>
-      </tr>
-    `;
+  if (!filtered.length) {
+    bitacoraTimelineList.innerHTML = `<div class="bitacora-timeline-empty">No hay entradas que coincidan con los filtros. Prueba a limpiar filtros o ajustar la búsqueda.</div>`;
     return;
   }
 
-  bitacoraBody.innerHTML = rows
-    .map((row) => `
-      <tr data-bitacora-row-id="${escapeHtml(row.id)}">
-        <td class="bitacora-cell col-fecha" data-bitacora-id="${escapeHtml(row.id)}" data-bitacora-field="fecha">${formatBitacoraCellHtml(formatearFechaBitacora(row.fecha))}</td>
-        <td class="bitacora-cell col-tipo" data-bitacora-id="${escapeHtml(row.id)}" data-bitacora-field="tipo">${formatBitacoraCellHtml(row.tipo)}</td>
-        <td class="bitacora-cell col-programa" data-bitacora-id="${escapeHtml(row.id)}" data-bitacora-field="programa">${formatBitacoraCellHtml(row.programa)}</td>
-        <td class="bitacora-cell col-cambios" data-bitacora-id="${escapeHtml(row.id)}" data-bitacora-field="cambios">${formatBitacoraCellHtml(row.cambios, true)}</td>
-        <td class="bitacora-cell col-observaciones" data-bitacora-id="${escapeHtml(row.id)}" data-bitacora-field="observaciones">${formatBitacoraCellHtml(row.observaciones, true)}</td>
-        <td class="col-eliminar">
-          <button type="button" class="btn-toolbar btn-danger btn-small bitacora-delete-btn" data-bitacora-delete-id="${escapeHtml(row.id)}">Eliminar</button>
-        </td>
-      </tr>
-    `)
+  bitacoraTimelineList.innerHTML = pageRows
+    .map((row, i) => {
+      const id = escapeHtml(row.id);
+      const titulo = escapeHtml(bitacoraDisplayTitulo(row));
+      const fechaStr = escapeHtml(formatearFechaBitacora(row.fecha));
+      const tipo = escapeHtml(row.tipo || "");
+      const prog = escapeHtml(row.programa || "");
+      const descRaw = [row.cambios, row.observaciones].filter(Boolean).join("\n\n");
+      const descHtml = escapeHtml(descRaw).replaceAll("\n", "<br>");
+      const imp = String(row.impacto || "").toLowerCase();
+      const impLabel = bitacoraImpactoLabel(imp);
+      const impChip =
+        imp && impLabel
+          ? `<span class="bitacora-chip bitacora-chip--impacto bitacora-chip--impacto-${escapeHtml(imp)}">${escapeHtml(impLabel)}</span>`
+          : "";
+      const impBadge = row.importante ? `<span class="bitacora-badge-importante"><i class="fa-solid fa-star" aria-hidden="true"></i> Importante</span>` : "";
+      const tipoChip = tipo ? `<span class="bitacora-chip bitacora-chip--tipo">${tipo}</span>` : "";
+      const progChip = prog ? `<span class="bitacora-chip bitacora-chip--programa">${prog}</span>` : "";
+      const delay = Math.min(320, 40 + i * 36);
+      return `
+      <article class="bitacora-card bitacora-card-enter" style="--bitacora-card-delay:${delay}ms" data-bitacora-card-id="${id}">
+        <div class="bitacora-card-track" aria-hidden="true"><span class="bitacora-card-node"></span></div>
+        <div class="bitacora-card-time">${fechaStr}</div>
+        <div class="bitacora-card-main">
+          <div class="bitacora-card-headrow">
+            <h4 class="bitacora-card-title">${titulo}</h4>
+            <div class="bitacora-card-actions">
+              <button type="button" class="bitacora-card-icon-btn" data-bitacora-edit-id="${id}" title="Editar" aria-label="Editar entrada"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+              <button type="button" class="bitacora-card-icon-btn bitacora-card-icon-btn--danger" data-bitacora-delete-id="${id}" title="Eliminar" aria-label="Eliminar entrada"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+            </div>
+          </div>
+          ${impBadge ? `<div class="bitacora-card-badges-top">${impBadge}</div>` : ""}
+          <div class="bitacora-card-desc">${descHtml || "&nbsp;"}</div>
+          <div class="bitacora-card-chips">${tipoChip}${progChip}${impChip}</div>
+        </div>
+      </article>`;
+    })
     .join("");
+}
 
-  if (pendingBitacoraFocus) {
-    const focusTarget = pendingBitacoraFocus;
-    pendingBitacoraFocus = null;
-    requestAnimationFrame(() => {
-      activateBitacoraCellEdition(focusTarget.rowId, focusTarget.field);
-    });
-  }
+try {
+  globalThis.__campatrackRenderBitacoraAfterHydrate = () => {
+    renderBitacoraTable();
+  };
+} catch (_) {
+  /* ignore */
 }
 
 function initBitacoraModule() {
   hydratarBitacoraData();
-  renderBitacoraTipoSelect();
   initBitacoraDateRangePicker();
   if (bitacoraFiltroProgramaInput) bitacoraFiltroProgramaInput.value = bitacoraFiltros.programa;
+  if (bitacoraBusquedaInput) bitacoraBusquedaInput.value = bitacoraFiltros.busqueda;
   if (bitacoraFechaRangoPicker && bitacoraFiltros.fechaInicio && bitacoraFiltros.fechaFin) {
     bitacoraFechaRangoPicker.setDate([bitacoraFiltros.fechaInicio, bitacoraFiltros.fechaFin], true, "Y-m-d");
   } else if (bitacoraFechaRangoInput) {
     bitacoraFechaRangoInput.value = formatBitacoraRangeInputValue(bitacoraFiltros.fechaInicio, bitacoraFiltros.fechaFin);
   }
+  resetBitacoraEntryForm();
+  refreshBitacoraFormProgramaOptions();
   renderBitacoraTable();
 
-  bitacoraAddRowBtn?.addEventListener("click", () => {
-    const row = createBitacoraRow();
-    bitacoraData.unshift(row);
-    persistBitacoraData();
-    pendingBitacoraFocus = { rowId: row.id, field: "fecha" };
+  bitacoraGuardarEntradaBtn?.addEventListener("click", () => guardarBitacoraDesdeFormulario());
+  bitacoraCancelarEdicionBtn?.addEventListener("click", () => resetBitacoraEntryForm());
+  bitacoraFormCambios?.addEventListener("input", () => updateBitacoraCharCount());
+
+  bitacoraTimelineList?.addEventListener("click", (event) => {
+    const editBtn = event.target.closest("[data-bitacora-edit-id]");
+    if (editBtn) {
+      const id = editBtn.getAttribute("data-bitacora-edit-id");
+      if (id) fillBitacoraEntryFormFromRow(id);
+      return;
+    }
+    const delBtn = event.target.closest("[data-bitacora-delete-id]");
+    if (delBtn) {
+      const rowId = delBtn.getAttribute("data-bitacora-delete-id");
+      if (!rowId) return;
+      const rowIndex = findBitacoraRowIndex(rowId);
+      if (rowIndex < 0) return;
+      bitacoraData.splice(rowIndex, 1);
+      if (String(bitacoraEditingId || "") === String(rowId)) resetBitacoraEntryForm();
+      persistBitacoraData();
+      renderBitacoraTable();
+    }
+  });
+
+  bitacoraPaginationNav?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-bitacora-page]");
+    if (!btn) return;
+    const p = Number(btn.getAttribute("data-bitacora-page"));
+    if (!Number.isFinite(p) || p < 1) return;
+    bitacoraPageIndex = Math.round(p);
     renderBitacoraTable();
   });
 
-  bitacoraBody?.addEventListener("dblclick", (event) => {
-    const cell = event.target.closest("td.bitacora-cell[data-bitacora-id][data-bitacora-field]");
-    if (!cell) return;
-    const rowId = cell.getAttribute("data-bitacora-id");
-    const field = cell.getAttribute("data-bitacora-field");
-    if (!rowId || !field) return;
-    activateBitacoraCellEdition(rowId, field);
+  bitacoraBusquedaInput?.addEventListener("input", (event) => {
+    bitacoraFiltros.busqueda = event.target instanceof HTMLInputElement ? event.target.value : "";
+    bitacoraPageIndex = 1;
+    renderBitacoraTable();
   });
 
-  bitacoraBody?.addEventListener("click", (event) => {
-    const btn = event.target.closest("button.bitacora-delete-btn[data-bitacora-delete-id]");
-    if (!btn) return;
-    const rowId = btn.getAttribute("data-bitacora-delete-id");
-    if (!rowId) return;
-    const rowIndex = findBitacoraRowIndex(rowId);
-    if (rowIndex < 0) return;
-    if (bitacoraEditSession && String(bitacoraEditSession.rowId) === String(rowId)) {
-      bitacoraEditSession = null;
-    }
-    bitacoraData.splice(rowIndex, 1);
-    persistBitacoraData();
+  bitacoraLimpiarFiltrosBtn?.addEventListener("click", () => {
+    bitacoraFiltros.tipo = "";
+    bitacoraFiltros.programa = "";
+    bitacoraFiltros.fechaInicio = "";
+    bitacoraFiltros.fechaFin = "";
+    bitacoraFiltros.busqueda = "";
+    if (bitacoraFiltroTipoSelect instanceof HTMLSelectElement) bitacoraFiltroTipoSelect.value = "";
+    if (bitacoraFiltroProgramaInput instanceof HTMLInputElement) bitacoraFiltroProgramaInput.value = "";
+    if (bitacoraBusquedaInput instanceof HTMLInputElement) bitacoraBusquedaInput.value = "";
+    if (bitacoraFechaRangoPicker) bitacoraFechaRangoPicker.clear();
+    else if (bitacoraFechaRangoInput) bitacoraFechaRangoInput.value = "";
+    bitacoraPageIndex = 1;
+    renderBitacoraTable();
+  });
+
+  bitacoraExportBtn?.addEventListener("click", () => exportarBitacoraJsonFiltrado());
+
+  bitacoraOrdenSelect?.addEventListener("change", () => {
+    bitacoraPageIndex = 1;
+    renderBitacoraTable();
+  });
+
+  bitacoraPageSizeSelect?.addEventListener("change", () => {
+    bitacoraPageIndex = 1;
     renderBitacoraTable();
   });
 
   bitacoraFiltroProgramaInput?.addEventListener("input", (event) => {
     bitacoraFiltros.programa = event.target instanceof HTMLInputElement ? event.target.value : "";
+    bitacoraPageIndex = 1;
     renderBitacoraTable();
   });
 
   bitacoraFiltroTipoSelect?.addEventListener("change", (event) => {
     bitacoraFiltros.tipo = event.target instanceof HTMLSelectElement ? event.target.value : "";
+    bitacoraPageIndex = 1;
     renderBitacoraTable();
   });
 
@@ -5146,6 +5343,7 @@ function initBitacoraModule() {
     } else if (bitacoraFechaRangoInput) {
       bitacoraFechaRangoInput.value = formatBitacoraRangeInputValue(parsed.start, parsed.end);
     }
+    bitacoraPageIndex = 1;
     renderBitacoraTable();
   });
 
@@ -5698,6 +5896,9 @@ const EXPORT_BUNDLE_KEYS = [
   "cc_data",
   "planning_data",
   "catalogos_sistema",
+  "consumo_por_campaña",
+  "programs",
+  "bitacora_data",
   "data_general",
   "data_ads_report",
   "data_anuncios",
@@ -5707,7 +5908,7 @@ const EXPORT_BUNDLE_KEYS = [
 ];
 
 /** Estado adicional que el dashboard hidrata / persiste fuera del JSON mínimo de export. */
-const CLAVES_EXTRA_ESTADO_SISTEMA = ["campaniasUnicasData", "medidas", "modeloAnalitico"];
+const CLAVES_EXTRA_ESTADO_SISTEMA = ["campaniasUnicasData", "medidas", "modeloAnalitico", "modelo"];
 
 /** Evita POST solapados: una importación tras otra espera la respuesta anterior. */
 let guardarDataEnApiCadena = Promise.resolve();
@@ -5732,20 +5933,29 @@ function normalizarPayloadABundleImport(payload) {
 
 /** Misma lectura que `exportarDatosSistema` (sin llamar persist*): reflejo de lo guardado tras importar. */
 function construirSnapshotDesdeLocalStorageComoExport() {
+  syncCcBitacoraModeloDraftFromRuntime();
+  const modeloSer = serializeModelo(modeloMergedCache || modeloAnalitico);
+  const bitFromDraft = appState.dataDraft?.bitacora_data;
+  const bitacoraSnap = Array.isArray(bitFromDraft)
+    ? JSON.parse(JSON.stringify(bitFromDraft))
+    : leerJsonLocalStorage(LS_BITACORA_DATA) ?? JSON.parse(JSON.stringify(bitacoraData));
   return {
-    cc_data: leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
+    cc_data: appState.dataDraft?.cc_data ?? leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
+    consumo_por_campaña: mergeConsumoForPersist(),
+    programs: JSON.parse(JSON.stringify(programs)),
+    bitacora_data: bitacoraSnap,
     data_general: serializeDataReal(ensureDataGeneralDraftShape()),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: JSON.parse(JSON.stringify(ensureRelacionesDraftShape())),
-    campatrack_users_db: getCampatrackStoredUsers(),
+    campatrack_users_db: JSON.parse(JSON.stringify(ensureCampatrackUsersDraftShape())),
     campatrack_teams_db: getCampatrackStoredTeams(),
     campaniasUnicasData: leerJsonLocalStorage(LS_KEYS.campaniasUnicasData),
     medidas: leerJsonLocalStorage(LS_KEYS.medidas),
-    modeloAnalitico:
-      leerJsonLocalStorage(LS_KEYS.modeloAnalitico) ?? leerJsonLocalStorage("modelo")
+    modeloAnalitico: appState.dataDraft?.modeloAnalitico ?? appState.dataDraft?.modelo ?? modeloSer,
+    modelo: appState.dataDraft?.modelo ?? modeloSer
   };
 }
 
@@ -5775,6 +5985,7 @@ const CAMPATRACK_API_ORIGIN =
 async function persistPublishedBundleToBackend() {
   try {
     if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) return;
+    syncCcBitacoraModeloDraftFromRuntime();
     recomputePlanningMergedCacheFromRecords();
     const mergedPlan = planningMergedRecordsCache || planningDraftRecords().slice();
     const base = obtenerDataCompletaRealParaAPI();
@@ -5985,7 +6196,13 @@ async function cargarDataDesdeBackend() {
       if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
       if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
       if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
+      if (typeof renderBitacoraTable === "function") renderBitacoraTable();
       if (typeof renderDashboard === "function") renderDashboard();
+      if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+        try {
+          window.campatrackRefreshUsersListIfVisible();
+        } catch (_) {}
+      }
       return;
     }
     console.log("🔥 Cargando data desde backend...");
@@ -6013,7 +6230,13 @@ async function cargarDataDesdeBackend() {
     if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
     if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
     if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
+    if (typeof renderBitacoraTable === "function") renderBitacoraTable();
     if (typeof renderDashboard === "function") renderDashboard();
+    if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+      try {
+        window.campatrackRefreshUsersListIfVisible();
+      } catch (_) {}
+    }
   } catch (err) {
     console.error("Error cargando data:", err);
   }
@@ -6126,6 +6349,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     } catch (_) {}
 
     for (const clave of EXPORT_BUNDLE_KEYS) {
+      if (clave === "campatrack_users_db") continue;
       if (!Object.prototype.hasOwnProperty.call(bundlePayload, clave)) continue;
       const v = bundlePayload[clave];
       if (v == null || v === undefined) continue;
@@ -6594,8 +6818,6 @@ function guardarTodo(opts = {}) {
       appMemoryKV.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios)));
     }
     refreshTeamScopedDataCachesForSnapshot();
-    appMemoryKV.setItem("centro_costos", JSON.stringify(centrosCostos));
-    appMemoryKV.setItem("modelo", JSON.stringify(serializeModelo(modeloMergedCache || modeloAnalitico)));
   } catch (err) {
     console.warn("No se pudo ejecutar guardarTodo()", err);
   }
@@ -6648,8 +6870,7 @@ function persistRelacionesAndModeloCleared() {
     tid,
     normalizeRowTeamId
   );
-  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
-  guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
+  syncCcBitacoraModeloDraftFromRuntime();
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
   registerUnpublishedDraftMutation();
@@ -6720,11 +6941,22 @@ function readFullMedidasFromDisk() {
   return rows;
 }
 
-function readFullModeloFromDisk() {
+/** Solo memoria clave-valor (sin `dataDraft`), para bases de merge al aplicar bundles. */
+function readFullModeloFromLegacyStorage() {
   const storedModelo = cargarDesdeLocalStorage("modelo") ?? cargarDesdeLocalStorage(LS_KEYS.modeloAnalitico);
   const rows = Array.isArray(storedModelo) ? deserializeModelo(storedModelo) : [];
   migrateMissingTeamIdOnRows(rows);
   return rows;
+}
+
+function readFullModeloFromDisk() {
+  const draftModelo = appState.dataDraft?.modelo ?? appState.dataDraft?.modeloAnalitico;
+  if (Array.isArray(draftModelo) && draftModelo.length) {
+    const rows = deserializeModelo(draftModelo);
+    migrateMissingTeamIdOnRows(rows);
+    return rows;
+  }
+  return readFullModeloFromLegacyStorage();
 }
 
 function refreshTeamScopedDataCachesForSnapshot() {
@@ -6822,8 +7054,7 @@ function persistModeloState() {
     tid,
     normalizeRowTeamId
   );
-  guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
-  guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
+  syncCcBitacoraModeloDraftFromRuntime();
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
   registerUnpublishedDraftMutation();
@@ -6906,8 +7137,7 @@ function hydratarDesdeLocalStorage() {
     clearCurrentTeamRelacionesInDraft();
     modeloAnalitico = [];
     modeloMergedCache = mergeRowsByTeamId(modeloMergedCache, [], getCurrentTeamId(), normalizeRowTeamId);
-    guardarEnLocalStorage(LS_KEYS.modeloAnalitico, serializeModelo(modeloMergedCache));
-    guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
+    syncCcBitacoraModeloDraftFromRuntime();
   } else {
     pruneRelacionesWithoutData();
   }
@@ -12410,46 +12640,21 @@ const LS_CAMPATRACK_ROLE = "rol";
 const LS_CAMPATRACK_USER = "campatrack_user";
 /** Clave localStorage para tema (`"dark"` | `"light"`). */
 const LS_CAMPATRACK_THEME = "theme";
-/** Usuarios registrados localmente (JSON array). */
-const LS_CAMPATRACK_USERS = "campatrack_users_db";
-/** Borrador en RAM cuando hay persistencia diferida; `null` = aún no hidratado desde disco. */
-let campatrackUsersDraft = null;
-
-function hydrateCampatrackUsersDraftFromLocalStorageIfNeeded() {
-  if (campatrackUsersDraft !== null) return;
-  try {
-    const raw = appMemoryKV.getItem(LS_CAMPATRACK_USERS);
-    if (!raw) {
-      campatrackUsersDraft = [];
-      return;
-    }
-    const arr = JSON.parse(raw);
-    const list = Array.isArray(arr) ? arr : [];
-    campatrackUsersDraft = list.map((u) => (u && typeof u === "object" ? { ...u } : u));
-  } catch {
-    campatrackUsersDraft = [];
-  }
-}
 
 function campatrackInvalidateUsersDraft() {
-  campatrackUsersDraft = null;
+  const d = ensureCampatrackUsersDraftShape();
+  d.length = 0;
 }
 
 function getCampatrackStoredUsers() {
-  hydrateCampatrackUsersDraftFromLocalStorageIfNeeded();
-  return campatrackUsersDraft.map((u) => (u && typeof u === "object" ? { ...u } : u));
+  return ensureCampatrackUsersDraftShape().map((u) => (u && typeof u === "object" ? { ...u } : u));
 }
 
 function saveCampatrackStoredUsers(list) {
   const next = Array.isArray(list) ? list.map((u) => (u && typeof u === "object" ? { ...u } : u)) : [];
-  campatrackUsersDraft = next;
-  if (!shouldDeferDiskPersistence()) {
-    try {
-      appMemoryKV.setItem(LS_CAMPATRACK_USERS, JSON.stringify(campatrackUsersDraft));
-    } catch (e) {
-      console.warn("No se pudo guardar usuarios", e);
-    }
-  }
+  const draft = ensureCampatrackUsersDraftShape();
+  draft.length = 0;
+  next.forEach((u) => draft.push(u));
   registerUnpublishedDraftMutation();
 }
 
@@ -12542,11 +12747,7 @@ const CAMPATRACK_LS_PRESERVE_ON_LOGIN = [
 ];
 
 function campatrackSnapshotAuthLocalStorage() {
-  let users = null;
   let theme = null;
-  try {
-    users = JSON.stringify(getCampatrackStoredUsers());
-  } catch (_) {}
   try {
     theme = appMemoryKV.getItem(LS_CAMPATRACK_THEME);
   } catch (_) {}
@@ -12557,14 +12758,11 @@ function campatrackSnapshotAuthLocalStorage() {
       if (v != null) preserved[k] = v;
     } catch (_) {}
   }
-  return { users, theme, preserved };
+  return { theme, preserved };
 }
 
 function campatrackRestoreAuthLocalStorage(snap, opts = {}) {
   if (!snap) return;
-  try {
-    if (snap.users != null) appMemoryKV.setItem(LS_CAMPATRACK_USERS, snap.users);
-  } catch (_) {}
   try {
     if (snap.theme != null) appMemoryKV.setItem(LS_CAMPATRACK_THEME, snap.theme);
   } catch (_) {}
@@ -13410,6 +13608,20 @@ function initUsuariosModule() {
     resetPhotoUiOnly();
   };
 
+  const resetUsersPasswordFieldUi = () => {
+    const p = el("usersClave");
+    const btn = el("usersClaveToggle");
+    if (p instanceof HTMLInputElement) {
+      p.type = "password";
+      p.value = "";
+    }
+    if (btn) {
+      const i = btn.querySelector("i");
+      if (i) i.className = "fa-solid fa-eye";
+      btn.setAttribute("aria-label", "Mostrar contraseña");
+    }
+  };
+
   function resetForm() {
     clearFieldErrors();
     editingUserId = null;
@@ -13419,7 +13631,7 @@ function initUsuariosModule() {
     const a = el("usersApellido");
     const c = el("usersCargo");
     const u = el("usersUsuario");
-    const p = el("usersClave");
+    resetUsersPasswordFieldUi();
     if (n instanceof HTMLInputElement) n.value = "";
     if (a instanceof HTMLInputElement) a.value = "";
     if (c instanceof HTMLInputElement) c.value = "";
@@ -13427,7 +13639,6 @@ function initUsuariosModule() {
       u.value = "";
       u.readOnly = false;
     }
-    if (p instanceof HTMLInputElement) p.value = "";
     const teamNew = el("usersTeamNew");
     if (teamNew instanceof HTMLInputElement) teamNew.value = "";
     fillUsersTeamSelect(TEAM_GENERAL_ID);
@@ -13461,7 +13672,26 @@ function initUsuariosModule() {
       u.value = String(r.usuario || "");
       u.readOnly = true;
     }
-    if (p instanceof HTMLInputElement) p.value = "";
+    if (p instanceof HTMLInputElement) {
+      const plain = String(r.clave_plano ?? "").trim();
+      p.value = plain;
+      const btn = el("usersClaveToggle");
+      if (plain) {
+        p.type = "text";
+        if (btn) {
+          const i = btn.querySelector("i");
+          if (i) i.className = "fa-solid fa-eye-slash";
+          btn.setAttribute("aria-label", "Ocultar contraseña");
+        }
+      } else {
+        p.type = "password";
+        if (btn) {
+          const i = btn.querySelector("i");
+          if (i) i.className = "fa-solid fa-eye";
+          btn.setAttribute("aria-label", "Mostrar contraseña");
+        }
+      }
+    }
     resetPhotoUiOnly();
     photoDataUrl = null;
     const fotoStr = editingOriginalFoto;
@@ -13758,6 +13988,7 @@ function initUsuariosModule() {
         cargo,
         usuario,
         clave: hash,
+        clave_plano: clave,
         foto,
         modulos,
         teamId: teamIdResolved,
@@ -13776,6 +14007,7 @@ function initUsuariosModule() {
         apellido,
         usuario,
         clave: hash,
+        clave_plano: clave,
         cargo,
         foto,
         estado: "activo",
@@ -13830,12 +14062,66 @@ function initUsuariosModule() {
       renderUsersList();
     } catch (_) {}
   };
+  try {
+    globalThis.__campatrackUsersAfterHydrate = () => {
+      try {
+        if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+          window.campatrackRefreshUsersListIfVisible();
+        }
+      } catch (_) {}
+    };
+  } catch (_) {}
 }
 
 
 function initCampatrackLogin() {
   const form = document.getElementById("campatrackLoginForm");
   const err = document.getElementById("campatrackLoginError");
+  const passEl = document.getElementById("campatrackPass");
+  const passToggle = document.getElementById("campatrackPassToggle");
+  const forgot = document.getElementById("campatrackLoginForgot");
+  const sso = document.getElementById("campatrackLoginSso");
+  const LS_LOGIN_REMEMBER = "campatrack_login_remember_user";
+
+  try {
+    const saved = localStorage.getItem(LS_LOGIN_REMEMBER);
+    const rememberCb = document.getElementById("campatrackLoginRemember");
+    const userIn = document.getElementById("campatrackUser");
+    if (saved && rememberCb instanceof HTMLInputElement && userIn instanceof HTMLInputElement) {
+      rememberCb.checked = true;
+      if (!String(userIn.value || "").trim()) userIn.value = saved;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
+  passToggle?.addEventListener("click", () => {
+    if (!(passEl instanceof HTMLInputElement)) return;
+    const show = passEl.type === "password";
+    passEl.type = show ? "text" : "password";
+    passToggle.setAttribute("aria-pressed", show ? "true" : "false");
+    passToggle.setAttribute("aria-label", show ? "Ocultar contraseña" : "Mostrar contraseña");
+    const ico = passToggle.querySelector("i");
+    if (ico) ico.className = show ? "fa-regular fa-eye-slash" : "fa-regular fa-eye";
+  });
+
+  forgot?.addEventListener("click", (e) => {
+    e.preventDefault();
+    void showAppDialog({
+      message: "Para restablecer tu contraseña, contacta al administrador de tu organización.",
+      primaryText: "Entendido",
+      showSecondary: false
+    });
+  });
+
+  sso?.addEventListener("click", () => {
+    void showAppDialog({
+      message: "El inicio de sesión con SSO estará disponible próximamente.",
+      primaryText: "Entendido",
+      showSecondary: false
+    });
+  });
+
   form?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = String(document.getElementById("campatrackUser")?.value || "").trim();
@@ -13844,6 +14130,17 @@ function initCampatrackLogin() {
     err?.classList.add("hidden");
     if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
     const finishOk = async (loggedInUser) => {
+      try {
+        const rememberCb = document.getElementById("campatrackLoginRemember");
+        const userIn = document.getElementById("campatrackUser");
+        const un = String(userIn?.value || "").trim();
+        if (rememberCb instanceof HTMLInputElement) {
+          if (rememberCb.checked && un) localStorage.setItem(LS_LOGIN_REMEMBER, un);
+          else localStorage.removeItem(LS_LOGIN_REMEMBER);
+        }
+      } catch (_) {
+        /* ignore */
+      }
       err?.classList.add("hidden");
       const uOk =
         loggedInUser && String(loggedInUser.username || "").trim()
@@ -14061,6 +14358,10 @@ function initTabs() {
     }
     if (safeModule === "costos") {
       syncCentroCostosYConsumoDesdePlanning();
+    }
+    if (isBitacora) {
+      if (typeof refreshBitacoraFormProgramaOptions === "function") refreshBitacoraFormProgramaOptions();
+      if (typeof renderBitacoraTable === "function") renderBitacoraTable();
     }
     if (safeModule === "relaciones") {
       refreshRelacionesFilterSelects();
@@ -14343,7 +14644,6 @@ updatePublishDraftToolbar();
 
 export {
   accumulatePlanningPeriodMetaFromMonthly,
-  activateBitacoraCellEdition,
   actualizarFiltrosCache,
   addDaysToDateString,
   adsReportCoerceHttpUrl,
@@ -14393,7 +14693,6 @@ export {
   collectMotivosWhyNotInFinalDashboard,
   collectProgramNamesForPlanningTipo,
   combinarDetalleCargaReport,
-  commitBitacoraEditSession,
   commitProgramDraftFromEditor,
   commitTotalBudgetManualEdit,
   compressImageFileToDataUrlMaxBytes,
@@ -14409,7 +14708,6 @@ export {
   construirSnapshotDesdeLocalStorageComoExport,
   countDaysByMonthForRangeInYear,
   countDaysInMonthIntersection,
-  createBitacoraEditorForField,
   createBitacoraRow,
   dashboardCampaignIdKey,
   dashboardCampaignKeyExact,
@@ -14516,8 +14814,6 @@ export {
   getAllowedCampatrackModules,
   getAnuncioLinkViewInnerHtml,
   getAutoLockedRowsForEdit,
-  getBitacoraCellElement,
-  getBitacoraFieldIndex,
   getBitacoraProgramOptions,
   getBitacoraTipoOptions,
   getCampatrackIndexPageUrl,
@@ -14550,8 +14846,6 @@ export {
   getLatestCampaignNameMap,
   getLockedBudgetTotalForDays,
   getMonthRange,
-  getNextBitacoraTargetByEnter,
-  getNextBitacoraTargetByTab,
   getPlanningByProgIntakeTrackPlat,
   getPlanningByPrograma,
   getPlanningGroups,

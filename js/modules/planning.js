@@ -3,7 +3,6 @@
  * La implementación completa está en ../_app.impl.js (sin cambios de lógica).
  */
 export {
-  activateBitacoraCellEdition,
   addDaysToDateString,
   aggregatePlanningMonthlyByDimension,
   agregarValorSiNoExiste,
@@ -18,7 +17,6 @@ export {
   clipRangeToYear,
   closeModal,
   collectProgramNamesForPlanningTipo,
-  commitBitacoraEditSession,
   commitProgramDraftFromEditor,
   commitTotalBudgetManualEdit,
   computeMinFechaInicioForForm,
@@ -26,7 +24,6 @@ export {
   computeMonthlyArraysForRecordWithOverrides,
   countDaysByMonthForRangeInYear,
   countDaysInMonthIntersection,
-  createBitacoraEditorForField,
   createBitacoraRow,
   dateRangesOverlap,
   daysInCalendarMonth,
@@ -49,8 +46,6 @@ export {
   formatMoney,
   formatMoneyCc,
   getAutoLockedRowsForEdit,
-  getBitacoraCellElement,
-  getBitacoraFieldIndex,
   getBitacoraProgramOptions,
   getBitacoraTipoOptions,
   getCentroCostoKey,
@@ -58,8 +53,6 @@ export {
   getFormValues,
   getLockedBudgetTotalForDays,
   getMonthRange,
-  getNextBitacoraTargetByEnter,
-  getNextBitacoraTargetByTab,
   getProgramsByType,
   getRecordsLinkedToCentroCostoRow,
   getSaldoDisponibleCentro,
