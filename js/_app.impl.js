@@ -4,6 +4,7 @@ import {
   ensureDataGeneralDraftShape,
   ensureRelacionesDraftShape,
   ensureCampatrackUsersDraftShape,
+  ensureAuditoriaDraftShape,
   getPlanningRecordIdSeq,
   setPlanningRecordIdSeq,
   bumpAppStatePendingChanges,
@@ -641,6 +642,7 @@ function syncCcBitacoraModeloDraftFromRuntime() {
   appState.dataDraft.modelo = modeloSer;
   appState.dataDraft.modeloAnalitico = modeloSer;
   appState.dataDraft.campatrack_users_db = JSON.parse(JSON.stringify(ensureCampatrackUsersDraftShape()));
+  appState.dataDraft.auditoria = JSON.parse(JSON.stringify(ensureAuditoriaDraftShape()));
 }
 
 function applyCcBitacoraModeloRuntimeFromDraftOrBundle(source) {
@@ -1558,6 +1560,121 @@ function registerUnpublishedDraftMutation() {
   updatePublishDraftToolbar();
 }
 
+const MAX_AUDITORIA_ENTRIES = 8000;
+
+function serializeAuditoriaValue(v) {
+  if (v === undefined) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "object" && v !== null) {
+    try {
+      const s = JSON.stringify(v);
+      return s.length > 1200 ? `${s.slice(0, 1200)}…` : s;
+    } catch {
+      return String(v);
+    }
+  }
+  return v;
+}
+
+function generarAuditoriaId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `aud_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Registro de cambios (planning / data) en `appState.dataDraft.auditoria`; el borrador se marca al persistir el módulo afectado. */
+function registrarAuditoria(evento) {
+  if (!evento || typeof evento !== "object") return;
+  const mod = evento.modulo;
+  const act = evento.accion;
+  if (mod !== "planning" && mod !== "data") return;
+  if (act !== "crear" && act !== "editar" && act !== "eliminar") return;
+  try {
+    const user = typeof getUser === "function" ? getUser() : null;
+    if (!user || !String(user.username || "").trim()) return;
+    const teamIdRaw = user.teamId != null ? String(user.teamId).trim() : "";
+    const teamId = teamIdRaw || TEAM_GENERAL_ID;
+    const row = {
+      id: generarAuditoriaId(),
+      fecha: new Date().toISOString(),
+      usuario: String(user.username || "").trim(),
+      teamId,
+      modulo: mod,
+      accion: act,
+      campo: String(evento.campo || ""),
+      valorAnterior: serializeAuditoriaValue(evento.valorAnterior),
+      valorNuevo: serializeAuditoriaValue(evento.valorNuevo),
+      descripcion: String(evento.descripcion || "")
+    };
+    const list = ensureAuditoriaDraftShape();
+    list.unshift(row);
+    if (list.length > MAX_AUDITORIA_ENTRIES) list.length = MAX_AUDITORIA_ENTRIES;
+  } catch (e) {
+    console.warn("registrarAuditoria", e);
+  }
+}
+
+function diffPlanningRecordForAudit(recordId, before, after) {
+  if (!before || !after) return;
+  const rid = String(recordId ?? "");
+  const keys = [
+    "fechaInicio",
+    "fechaFin",
+    "presupuesto",
+    "leads",
+    "tipo",
+    "programa",
+    "intake",
+    "plataforma",
+    "tracking",
+    "centroCostoId"
+  ];
+  for (const k of keys) {
+    const bv = before[k];
+    const av = after[k];
+    if (JSON.stringify(bv) !== JSON.stringify(av)) {
+      registrarAuditoria({
+        modulo: "planning",
+        accion: "editar",
+        campo: k,
+        valorAnterior: bv,
+        valorNuevo: av,
+        descripcion: `Planning id ${rid}: ${k}`
+      });
+    }
+  }
+  if (JSON.stringify(before.metas) !== JSON.stringify(after.metas)) {
+    registrarAuditoria({
+      modulo: "planning",
+      accion: "editar",
+      campo: "metas",
+      valorAnterior: before.metas,
+      valorNuevo: after.metas,
+      descripcion: `Planning id ${rid}: metas`
+    });
+  }
+  if (JSON.stringify(before.distribucionMensual) !== JSON.stringify(after.distribucionMensual)) {
+    registrarAuditoria({
+      modulo: "planning",
+      accion: "editar",
+      campo: "distribucionMensual",
+      valorAnterior: null,
+      valorNuevo: null,
+      descripcion: `Planning id ${rid}: distribución mensual`
+    });
+  }
+  if (JSON.stringify(before.monthlyInvOverride) !== JSON.stringify(after.monthlyInvOverride)) {
+    registrarAuditoria({
+      modulo: "planning",
+      accion: "editar",
+      campo: "monthlyInvOverride",
+      valorAnterior: null,
+      valorNuevo: null,
+      descripcion: `Planning id ${rid}: overrides mensuales`
+    });
+  }
+}
+
 function notifyDraftChanged() {
   if (!shouldDeferDiskPersistence()) return;
   if (appSuppressDraftNotifications > 0) return;
@@ -1593,7 +1710,8 @@ function buildMemorySnapshotForPublish() {
     relaciones: JSON.parse(JSON.stringify(ensureRelacionesDraftShape())),
     medidas: JSON.parse(JSON.stringify(medidasMergedCache || medidas)),
     modelo: serializeModelo(modeloMergedCache || modeloAnalitico),
-    campatrack_users_db: JSON.parse(JSON.stringify(getCampatrackStoredUsers()))
+    campatrack_users_db: JSON.parse(JSON.stringify(getCampatrackStoredUsers())),
+    auditoria: JSON.parse(JSON.stringify(ensureAuditoriaDraftShape()))
   };
 }
 
@@ -1757,6 +1875,15 @@ function applyMemorySnapshotFromBundle(snap) {
   } else {
     ensureCampatrackUsersDraftShape().length = 0;
   }
+  if (Array.isArray(snap.auditoria)) {
+    const aud = ensureAuditoriaDraftShape();
+    aud.length = 0;
+    snap.auditoria.forEach((x) => {
+      aud.push(x && typeof x === "object" ? { ...x } : x);
+    });
+  } else {
+    ensureAuditoriaDraftShape().length = 0;
+  }
   const allRows = dataReal.concat(dataAdsReport, dataAnuncios);
   dataIdSeq = Math.max(1, ...allRows.map((r) => Number(r._id) || 0)) + 1;
   if (hasDataGeneralLoaded()) pruneRelacionesWithoutData();
@@ -1823,6 +1950,11 @@ function refreshTodosModulosTrasBorradorOPublicar() {
   if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
     try {
       window.campatrackRefreshUsersListIfVisible();
+    } catch (_) {}
+  }
+  if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+    try {
+      globalThis.__campatrackRebuildAuditoriaAfterHydrate();
     } catch (_) {}
   }
   if (dashboardUiInicializado) {
@@ -3734,6 +3866,15 @@ deleteRecordBtn?.addEventListener("click", () => {
   const pr = planningDraftRecords();
   const idx = pr.findIndex((r) => samePlanningRecordId(r.id, selectedRecordId));
   if (idx < 0) return;
+  const removed = pr[idx];
+  registrarAuditoria({
+    modulo: "planning",
+    accion: "eliminar",
+    campo: "registro",
+    valorAnterior: { id: removed?.id, planningKey: planningKeyFromRecord(removed) },
+    valorNuevo: null,
+    descripcion: `Eliminación planning id ${String(removed?.id ?? "")}`
+  });
   pr.splice(idx, 1);
   selectedRecordId = null;
   console.log("Estado actual planning:", appState.dataDraft.planning.records);
@@ -4214,6 +4355,7 @@ campaignForm?.addEventListener("submit", (event) => {
         distribucionMensual: distSnap,
         monthlyInvOverride: distSnap ? undefined : ovSnap
       };
+      diffPlanningRecordForAudit(String(editingRecordId), prev, pr[idx]);
       console.log("Estado actual planning:", appState.dataDraft.planning.records);
     } else {
       const newRecord = {
@@ -4240,6 +4382,14 @@ campaignForm?.addEventListener("submit", (event) => {
         monthlyInvOverride: distSnap ? undefined : ovSnap
       };
       planningDraftRecords().push(newRecord);
+      registrarAuditoria({
+        modulo: "planning",
+        accion: "crear",
+        campo: "registro",
+        valorAnterior: null,
+        valorNuevo: { id: newRecord.id, planningKey: planningKeyFromRecord(newRecord) },
+        descripcion: `Nueva fila planning ${planningKeyFromRecord(newRecord)}`
+      });
       console.log("Estado actual planning:", appState.dataDraft.planning.records);
     }
 
@@ -4489,7 +4639,9 @@ planningBody?.addEventListener("dblclick", (event) => {
     const idx = records.findIndex((r) => samePlanningRecordId(r?.id, recordIdRaw));
     if (idx < 0) return;
     const rec = records[idx];
+    const beforeAudit = JSON.parse(JSON.stringify(rec));
     apply(rec, idx);
+    diffPlanningRecordForAudit(recordIdRaw, beforeAudit, JSON.parse(JSON.stringify(records[idx])));
     console.log("Registro actualizado:", records[idx]);
     if (opts.planningRowRefreshRecord) replacePlanningRowElement(records[idx]);
     else rebuildPlanningTable();
@@ -5904,7 +6056,8 @@ const EXPORT_BUNDLE_KEYS = [
   "data_anuncios",
   "relaciones",
   "campatrack_users_db",
-  "campatrack_teams_db"
+  "campatrack_teams_db",
+  "auditoria"
 ];
 
 /** Estado adicional que el dashboard hidrata / persiste fuera del JSON mínimo de export. */
@@ -5955,7 +6108,8 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     campaniasUnicasData: leerJsonLocalStorage(LS_KEYS.campaniasUnicasData),
     medidas: leerJsonLocalStorage(LS_KEYS.medidas),
     modeloAnalitico: appState.dataDraft?.modeloAnalitico ?? appState.dataDraft?.modelo ?? modeloSer,
-    modelo: appState.dataDraft?.modelo ?? modeloSer
+    modelo: appState.dataDraft?.modelo ?? modeloSer,
+    auditoria: JSON.parse(JSON.stringify(ensureAuditoriaDraftShape()))
   };
 }
 
@@ -6203,6 +6357,11 @@ async function cargarDataDesdeBackend() {
           window.campatrackRefreshUsersListIfVisible();
         } catch (_) {}
       }
+      if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+        try {
+          globalThis.__campatrackRebuildAuditoriaAfterHydrate();
+        } catch (_) {}
+      }
       return;
     }
     console.log("🔥 Cargando data desde backend...");
@@ -6235,6 +6394,11 @@ async function cargarDataDesdeBackend() {
     if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
       try {
         window.campatrackRefreshUsersListIfVisible();
+      } catch (_) {}
+    }
+    if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+      try {
+        globalThis.__campatrackRebuildAuditoriaAfterHydrate();
       } catch (_) {}
     }
   } catch (err) {
@@ -6349,7 +6513,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     } catch (_) {}
 
     for (const clave of EXPORT_BUNDLE_KEYS) {
-      if (clave === "campatrack_users_db") continue;
+      if (clave === "campatrack_users_db" || clave === "auditoria") continue;
       if (!Object.prototype.hasOwnProperty.call(bundlePayload, clave)) continue;
       const v = bundlePayload[clave];
       if (v == null || v === undefined) continue;
@@ -7668,6 +7832,14 @@ function deshacerUltimaCarga() {
   if (!last) return;
   const ids = new Set(last.registros.map((r) => String(r._id)));
   const dg = ensureDataGeneralDraftShape();
+  registrarAuditoria({
+    modulo: "data",
+    accion: "eliminar",
+    campo: "deshacer_carga",
+    valorAnterior: { ids: Array.from(ids) },
+    valorNuevo: null,
+    descripcion: `Deshacer última carga DATA (${ids.size} registros)`
+  });
   for (let i = dg.length - 1; i >= 0; i -= 1) {
     const r = dg[i];
     if (rowBelongsToCurrentTeam(r) && ids.has(String(r._id))) dg.splice(i, 1);
@@ -7688,6 +7860,14 @@ async function eliminarFilasSeleccionadas() {
   });
   if (!ok) return;
   const ids = new Set(Array.from(selectedDataIds).map((x) => String(x)));
+  registrarAuditoria({
+    modulo: "data",
+    accion: "eliminar",
+    campo: "registros_seleccionados",
+    valorAnterior: { ids: Array.from(ids), count: ids.size },
+    valorNuevo: null,
+    descripcion: `Eliminación DATA general: ${ids.size} registros`
+  });
   const dg = ensureDataGeneralDraftShape();
   for (let i = dg.length - 1; i >= 0; i -= 1) {
     const r = dg[i];
@@ -7759,6 +7939,14 @@ function initDataLoadModal() {
       const newRows = report.validas.map((r) => ({ ...r, _id: generateDataRowId() }));
       const { data: merged, insertadas, actualizadas } = upsertDataAnunciosLote(newRows, dataAnuncios);
       dataAnuncios = ordenarDataAnuncios(merged);
+      registrarAuditoria({
+        modulo: "data",
+        accion: insertadas > 0 && actualizadas === 0 ? "crear" : "editar",
+        campo: "carga_anuncios",
+        valorAnterior: null,
+        valorNuevo: { insertadas, actualizadas, ignoradas: report.ignoradas },
+        descripcion: `DATA anuncios: ${insertadas} insertadas, ${actualizadas} actualizadas`
+      });
       input.value = "";
       close();
       const statusAn = document.getElementById("dataAnunciosStatus");
@@ -7782,6 +7970,16 @@ function initDataLoadModal() {
     const { data: merged, insertadas, actualizadas, registrosInsertados } = upsertDataRowsLote(newRows, dataReal);
     const mergedSorted = ordenarPorFecha(merged);
     replaceCurrentTeamDataGeneralFromMerged(mergedSorted);
+    const accionData =
+      insertadas > 0 && actualizadas === 0 ? "crear" : actualizadas > 0 && insertadas === 0 ? "editar" : "editar";
+    registrarAuditoria({
+      modulo: "data",
+      accion: accionData,
+      campo: "carga_general",
+      valorAnterior: null,
+      valorNuevo: { insertadas, actualizadas, ignoradas: report.ignoradas },
+      descripcion: `DATA general: ${insertadas} insertadas, ${actualizadas} actualizadas`
+    });
     if (registrosInsertados.length) historialCargas.push({ registros: registrosInsertados, timestamp: new Date() });
     input.value = "";
     close();
@@ -9166,28 +9364,6 @@ function refreshSegmentadoresValues() {
       </div>
     `;
   }).join("");
-}
-
-function initModeloModule() {
-  document.getElementById("rebuildModeloBtn")?.addEventListener("click", REGENERAR_MODELO);
-  document.getElementById("addSegmentadorBtn")?.addEventListener("click", () => {
-    const field = document.getElementById("segField")?.value || "tipo";
-    if (!segmentadores.includes(field)) segmentadores.push(field);
-    if (!(field in estadoFiltros)) estadoFiltros[field] = null;
-    refreshSegmentadoresValues();
-  });
-  document.getElementById("segmentadoresContainer")?.addEventListener("click", (e) => {
-    const t = e.target;
-    if (!(t instanceof HTMLElement)) return;
-    const btn = t.closest("[data-seg-field]");
-    if (!btn) return;
-    const field = btn.getAttribute("data-seg-field") || "";
-    const val = btn.getAttribute("data-seg-val") || "";
-    if (!field) return;
-    estadoFiltros[field] = estadoFiltros[field] === val ? null : val;
-    refreshSegmentadoresValues();
-    renderModeloTabla();
-  });
 }
 
 function setFechaActualData() {
@@ -12697,10 +12873,10 @@ const CAMPATRACK_TOPBAR_META = {
   bitacora: { title: "Bitácora", sub: "Registro de actividades y seguimiento.", icon: "fa-clipboard-list" },
   data: { title: "Data", sub: "Carga, visualización y preparación de data real", icon: "fa-database" },
   relaciones: { title: "Relaciones", sub: "Vinculación entre planning y data.", icon: "fa-diagram-project" },
-  modelo: { title: "Modelo", sub: "Modelo analítico del sistema.", icon: "fa-cube" },
   medidas: { title: "Medidas", sub: "Cálculos y fórmulas personalizadas.", icon: "fa-ruler-combined" },
   "ads-report": { title: "Reporte de anuncios", sub: "Vista tipo Ads Manager.", icon: "fa-bullhorn" },
   usuarios: { title: "Usuarios", sub: "Registro de usuarios y permisos por módulo.", icon: "fa-user-plus" },
+  auditoria: { title: "Auditoría", sub: "Historial de cambios en Planning y Data por equipo.", icon: "fa-clipboard-check" },
 };
 
 const CAMPATRACK_REGISTER_MODULE_CARDS = [
@@ -12709,10 +12885,10 @@ const CAMPATRACK_REGISTER_MODULE_CARDS = [
   { id: "bitacora", label: "Bitácora", desc: "Actividades y notas", icon: "fa-clipboard-list", tone: "green" },
   { id: "data", label: "Data", desc: "Tablas de campañas", icon: "fa-table", tone: "orange" },
   { id: "relaciones", label: "Relaciones", desc: "Vínculos entre fuentes", icon: "fa-diagram-project", tone: "pink" },
-  { id: "modelo", label: "Modelo", desc: "Modelo analítico", icon: "fa-cube", tone: "teal" },
   { id: "medidas", label: "Medidas", desc: "Métricas y fórmulas", icon: "fa-ruler-combined", tone: "amber" },
   { id: "dashboard", label: "Dashboard", desc: "Resumen ejecutivo", icon: "fa-chart-pie", tone: "indigo" },
   { id: "ads-report", label: "Reporte de anuncios", desc: "Rendimiento de anuncios", icon: "fa-bullhorn", tone: "sky" },
+  { id: "auditoria", label: "Auditoría", desc: "Historial de cambios", icon: "fa-clipboard-check", tone: "purple" },
 ];
 
 const CAMPATRACK_LS_PRESERVE_ON_LOGIN = [
@@ -13092,14 +13268,14 @@ const CAMPATRACK_ALLOWED_MODULES_BY_ROLE = {
     "bitacora",
     "data",
     "relaciones",
-    "modelo",
     "medidas",
     "dashboard",
     "ads-report",
     "usuarios",
+    "auditoria",
   ]),
-  planner: new Set(["planning", "dashboard"]),
-  usuario: new Set(["costos", "planning", "bitacora", "dashboard", "ads-report"]),
+  planner: new Set(["planning", "dashboard", "auditoria"]),
+  usuario: new Set(["costos", "planning", "bitacora", "dashboard", "ads-report", "auditoria"]),
   viewer: new Set(["dashboard"]),
 };
 const CAMPATRACK_PROFILE_BY_ROLE = {
@@ -14073,6 +14249,139 @@ function initUsuariosModule() {
   } catch (_) {}
 }
 
+function escapeAuditoriaCell(v) {
+  if (v === undefined || v === null) return "—";
+  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  const cut = s.length > 240 ? `${s.slice(0, 240)}…` : s;
+  return escapeHtml(cut);
+}
+
+function auditoriaUsuarioPuedeVerTodosLosEquipos() {
+  const u = typeof getUser === "function" ? getUser() : null;
+  if (!u) return false;
+  if (u.campatrackSystemRoot === true) return true;
+  const t = String(u.teamId ?? "").trim().toUpperCase();
+  return t === "" || t === "ALL";
+}
+
+function getAuditoriaRowsFilteredForUi() {
+  const list = ensureAuditoriaDraftShape();
+  const u = typeof getUser === "function" ? getUser() : null;
+  const userTeamRaw = u?.teamId != null ? String(u.teamId).trim() : "";
+  const userTeam = userTeamRaw ? resolveCampatrackTeamId(userTeamRaw) || userTeamRaw : TEAM_GENERAL_ID;
+  let rows = list.filter((r) => {
+    if (auditoriaUsuarioPuedeVerTodosLosEquipos()) return true;
+    return String(r.teamId ?? "").trim() === String(userTeam).trim();
+  });
+  const modF = String(document.getElementById("auditFilterModulo")?.value || "").trim();
+  if (modF) rows = rows.filter((r) => String(r.modulo || "") === modF);
+  const usrF = String(document.getElementById("auditFilterUsuario")?.value || "").trim().toLowerCase();
+  if (usrF) rows = rows.filter((r) => String(r.usuario || "").toLowerCase().includes(usrF));
+  const actF = String(document.getElementById("auditFilterAccion")?.value || "").trim();
+  if (actF) rows = rows.filter((r) => String(r.accion || "") === actF);
+  const d0 = String(document.getElementById("auditFilterFechaDesde")?.value || "").trim();
+  const d1 = String(document.getElementById("auditFilterFechaHasta")?.value || "").trim();
+  if (d0) {
+    const t0 = new Date(`${d0}T00:00:00`).getTime();
+    rows = rows.filter((r) => {
+      const t = Date.parse(String(r.fecha || ""));
+      return Number.isFinite(t) && t >= t0;
+    });
+  }
+  if (d1) {
+    const t1 = new Date(`${d1}T23:59:59.999`).getTime();
+    rows = rows.filter((r) => {
+      const t = Date.parse(String(r.fecha || ""));
+      return Number.isFinite(t) && t <= t1;
+    });
+  }
+  return rows;
+}
+
+function exportAuditoriaVisibleToXlsx() {
+  const XLSX = typeof window !== "undefined" ? window.XLSX : null;
+  const rows = getAuditoriaRowsFilteredForUi();
+  if (!XLSX?.utils?.json_to_sheet) {
+    void showAppDialog({
+      message: "No se encontró la librería de Excel (SheetJS). Recarga la página e inténtalo de nuevo.",
+      primaryText: "Entendido",
+      showSecondary: false,
+      primaryDanger: false
+    });
+    return;
+  }
+  const data = rows.map((r) => ({
+    Fecha: r.fecha || "",
+    Usuario: r.usuario || "",
+    Equipo: r.teamId || "",
+    Módulo: r.modulo || "",
+    Acción: r.accion || "",
+    Campo: r.campo || "",
+    Descripción: r.descripcion || "",
+    "Valor anterior":
+      r.valorAnterior == null ? "" : typeof r.valorAnterior === "object" ? JSON.stringify(r.valorAnterior) : String(r.valorAnterior),
+    "Valor nuevo":
+      r.valorNuevo == null ? "" : typeof r.valorNuevo === "object" ? JSON.stringify(r.valorNuevo) : String(r.valorNuevo)
+  }));
+  const ws = XLSX.utils.json_to_sheet(data.length ? data : [{ Fecha: "", Nota: "Sin filas para exportar" }]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Auditoria");
+  const fname = `auditoria_${new Date().toISOString().slice(0, 10)}_${Date.now()}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+function rebuildAuditoriaTable() {
+  const tbody = document.getElementById("auditTbody");
+  const emptyEl = document.getElementById("auditEmpty");
+  if (!tbody) return;
+  const rows = getAuditoriaRowsFilteredForUi();
+  if (!rows.length) {
+    tbody.innerHTML = "";
+    if (emptyEl) emptyEl.classList.remove("hidden");
+    return;
+  }
+  if (emptyEl) emptyEl.classList.add("hidden");
+  tbody.innerHTML = rows
+    .map(
+      (r) => `<tr>
+    <td>${escapeHtml(String(r.fecha || "").replace("T", " ").slice(0, 19))}</td>
+    <td>${escapeHtml(String(r.usuario || ""))}</td>
+    <td>${escapeHtml(String(r.modulo || ""))}</td>
+    <td>${escapeHtml(String(r.accion || ""))}</td>
+    <td>${escapeHtml(String(r.campo || ""))}</td>
+    <td>${escapeHtml(String(r.descripcion || ""))}</td>
+    <td class="audit-col-json">${escapeAuditoriaCell(r.valorAnterior)}</td>
+    <td class="audit-col-json">${escapeAuditoriaCell(r.valorNuevo)}</td>
+  </tr>`
+    )
+    .join("");
+}
+
+function initAuditoriaModule() {
+  const filM = document.getElementById("auditFilterModulo");
+  const filU = document.getElementById("auditFilterUsuario");
+  const filA = document.getElementById("auditFilterAccion");
+  const filD0 = document.getElementById("auditFilterFechaDesde");
+  const filD1 = document.getElementById("auditFilterFechaHasta");
+  const btnApply = document.getElementById("auditFilterApplyBtn");
+  const btnExport = document.getElementById("auditExportBtn");
+  const re = () => {
+    try {
+      rebuildAuditoriaTable();
+    } catch (e) {
+      console.warn("rebuildAuditoriaTable", e);
+    }
+  };
+  btnApply?.addEventListener("click", re);
+  [filM, filU, filA, filD0, filD1].forEach((el) => el?.addEventListener("change", re));
+  const debU = debounce(re, 280);
+  filU?.addEventListener("input", debU);
+  btnExport?.addEventListener("click", () => exportAuditoriaVisibleToXlsx());
+  try {
+    globalThis.__campatrackRebuildAuditoriaAfterHydrate = re;
+  } catch (_) {}
+}
+
 
 function initCampatrackLogin() {
   const form = document.getElementById("campatrackLoginForm");
@@ -14227,43 +14536,43 @@ function initTabs() {
   const tabBitacora = document.getElementById("tabBitacora");
   const tabData = document.getElementById("tabData");
   const tabRelaciones = document.getElementById("tabRelaciones");
-  const tabModelo = document.getElementById("tabModelo");
   const tabMedidas = document.getElementById("tabMedidas");
   const tabDashboard = document.getElementById("tabDashboard");
   const tabReporteAnuncios = document.getElementById("tabReporteAnuncios");
   const tabUsuarios = document.getElementById("tabUsuarios");
+  const tabAuditoria = document.getElementById("tabAuditoria");
   const resetSystemBtn = document.getElementById("resetSystemBtn");
   const costCenterModule = document.getElementById("costCenterModule");
   const planningModule = document.getElementById("planningModule");
   const bitacoraModule = document.getElementById("bitacoraModule");
   const dataModule = document.getElementById("dataModule");
   const relacionesModule = document.getElementById("relacionesModule");
-  const modeloModule = document.getElementById("modeloModule");
   const medidasModule = document.getElementById("medidasModule");
   const dashboardModule = document.getElementById("dashboardModule");
   const adsReportModule = document.getElementById("adsReportModule");
   const usersModule = document.getElementById("usersModule");
+  const auditoriaModule = document.getElementById("auditoriaModule");
   if (
     !tabCentroCostos ||
     !tabPlanning ||
     !tabBitacora ||
     !tabData ||
     !tabRelaciones ||
-    !tabModelo ||
     !tabMedidas ||
     !tabDashboard ||
     !tabReporteAnuncios ||
     !tabUsuarios ||
+    !tabAuditoria ||
     !costCenterModule ||
     !planningModule ||
     !bitacoraModule ||
     !dataModule ||
     !relacionesModule ||
-    !modeloModule ||
     !medidasModule ||
     !dashboardModule ||
     !adsReportModule ||
-    !usersModule
+    !usersModule ||
+    !auditoriaModule
   )
     return;
 
@@ -14276,11 +14585,11 @@ function initTabs() {
     const canAccessBitacora = visibility.has("bitacora");
     const canAccessData = visibility.has("data");
     const canAccessRelaciones = visibility.has("relaciones");
-    const canAccessModelo = visibility.has("modelo");
     const canAccessMedidas = visibility.has("medidas");
     const canAccessDashboard = visibility.has("dashboard");
     const canAccessAdsReport = visibility.has("ads-report");
     const canAccessUsuarios = roleTabs.has("usuarios");
+    const canAccessAuditoria = visibility.has("auditoria");
     const storedUser = String(appMemoryKV.getItem(LS_CAMPATRACK_USER) || "").trim().toLowerCase();
     const isWiener = storedUser === "wiener";
     const canExport = role === "admin" || (role === "usuario" && !isWiener);
@@ -14295,11 +14604,11 @@ function initTabs() {
     tabBitacora.classList.toggle("hidden", !canAccessBitacora);
     tabData.classList.toggle("hidden", !canAccessData);
     tabRelaciones.classList.toggle("hidden", !canAccessRelaciones);
-    tabModelo.classList.toggle("hidden", !canAccessModelo);
     tabMedidas.classList.toggle("hidden", !canAccessMedidas);
     tabDashboard.classList.toggle("hidden", !canAccessDashboard);
     tabReporteAnuncios.classList.toggle("hidden", !canAccessAdsReport);
     tabUsuarios.classList.toggle("hidden", !canAccessUsuarios);
+    tabAuditoria.classList.toggle("hidden", !canAccessAuditoria);
     if (exportBtn) {
       exportBtn.classList.toggle("hidden", !canExport);
       exportBtn.toggleAttribute("disabled", !canExport);
@@ -14333,26 +14642,27 @@ function initTabs() {
     const isPlanning = safeModule === "planning";
     const isBitacora = safeModule === "bitacora";
     const isData = safeModule === "data";
+    const isAuditoria = safeModule === "auditoria";
     costCenterModule.classList.toggle("hidden", !isCostos);
     planningModule.classList.toggle("hidden", !isPlanning);
     bitacoraModule.classList.toggle("hidden", !isBitacora);
     dataModule.classList.toggle("hidden", !isData);
     relacionesModule.classList.toggle("hidden", safeModule !== "relaciones");
-    modeloModule.classList.toggle("hidden", safeModule !== "modelo");
     medidasModule.classList.toggle("hidden", safeModule !== "medidas");
     dashboardModule.classList.toggle("hidden", safeModule !== "dashboard");
     adsReportModule.classList.toggle("hidden", safeModule !== "ads-report");
     usersModule.classList.toggle("hidden", safeModule !== "usuarios");
+    auditoriaModule.classList.toggle("hidden", !isAuditoria);
     tabCentroCostos.classList.toggle("tab-active", isCostos);
     tabPlanning.classList.toggle("tab-active", isPlanning);
     tabBitacora.classList.toggle("tab-active", isBitacora);
     tabData.classList.toggle("tab-active", isData);
     tabRelaciones.classList.toggle("tab-active", safeModule === "relaciones");
-    tabModelo.classList.toggle("tab-active", safeModule === "modelo");
     tabMedidas.classList.toggle("tab-active", safeModule === "medidas");
     tabDashboard.classList.toggle("tab-active", safeModule === "dashboard");
     tabReporteAnuncios.classList.toggle("tab-active", safeModule === "ads-report");
     tabUsuarios.classList.toggle("tab-active", safeModule === "usuarios");
+    tabAuditoria.classList.toggle("tab-active", isAuditoria);
     if (typeof updateAppTopbarForModule === "function") {
       updateAppTopbarForModule(safeModule);
     }
@@ -14389,6 +14699,13 @@ function initTabs() {
         console.warn("campatrackUsersOnOpen", e);
       }
     }
+    if (isAuditoria && typeof rebuildAuditoriaTable === "function") {
+      try {
+        rebuildAuditoriaTable();
+      } catch (e) {
+        console.warn("rebuildAuditoriaTable", e);
+      }
+    }
     if (isData) {
       actualizarFiltrosCache();
       refreshFechaFiltersUI();
@@ -14404,11 +14721,11 @@ function initTabs() {
   tabBitacora.addEventListener("click", () => setActive("bitacora"));
   tabData.addEventListener("click", () => setActive("data"));
   tabRelaciones.addEventListener("click", () => setActive("relaciones"));
-  tabModelo.addEventListener("click", () => setActive("modelo"));
   tabMedidas.addEventListener("click", () => setActive("medidas"));
   tabDashboard.addEventListener("click", () => setActive("dashboard"));
   tabReporteAnuncios.addEventListener("click", () => setActive("ads-report"));
   tabUsuarios.addEventListener("click", () => setActive("usuarios"));
+  tabAuditoria.addEventListener("click", () => setActive("auditoria"));
   resetSystemBtn?.addEventListener("click", resetearSistemaCompleto);
 
   appActivateMainModule = setActive;
@@ -14611,11 +14928,11 @@ initDataLoadModal();
 initDataErrorModal();
 initDataFilters();
 initRelacionesModule();
-initModeloModule();
 initMedidasModule();
 initDashboardModule();
 initAdsReportModule();
 initUsuariosModule();
+initAuditoriaModule();
 limpiarFiltrosUiDataGeneral();
 actualizarFiltrosCache();
 refreshFechaFiltersUI();
@@ -14878,6 +15195,7 @@ export {
   initAdsReportModule,
   initAdsThumbModal,
   initAppThemeToggle,
+  initAuditoriaModule,
   initBitacoraDateRangePicker,
   initBitacoraModule,
   initCampaignPreviewBudgetEdit,
@@ -14892,7 +15210,6 @@ export {
   initDataSubTabs,
   initExportImportDatos,
   initMedidasModule,
-  initModeloModule,
   initRelacionesModule,
   initUsuariosModule,
   initTabs,
@@ -14973,10 +15290,12 @@ export {
   programKey,
   pruneRelacionesWithoutData,
   readLinkAnuncioFromRow,
+  rebuildAuditoriaTable,
   rebuildPlanningTable,
   recalcFromPercents,
   recalcularCentroCostos,
   recordUsesCentroCostoRow,
+  registrarAuditoria,
   refreshAdsReportFilterOptions,
   refreshCentroCostosUI,
   refreshFechaFiltersUI,

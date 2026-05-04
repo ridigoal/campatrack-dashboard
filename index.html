@@ -136,11 +136,11 @@
       <button id="tabPlanning" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-calendar-days campatrack-side-ico" aria-hidden="true"></i><span>Planning</span></button>
       <button id="tabData" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-table campatrack-side-ico" aria-hidden="true"></i><span>Data</span></button>
       <button id="tabRelaciones" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-diagram-project campatrack-side-ico" aria-hidden="true"></i><span>Relaciones</span></button>
-      <button id="tabModelo" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-cube campatrack-side-ico" aria-hidden="true"></i><span>Modelo</span></button>
       <button id="tabMedidas" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-ruler-combined campatrack-side-ico" aria-hidden="true"></i><span>Medidas</span></button>
       <button id="tabReporteAnuncios" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-bullhorn campatrack-side-ico" aria-hidden="true"></i><span>Reporte de anuncios</span></button>
       <button id="tabCentroCostos" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-wallet campatrack-side-ico" aria-hidden="true"></i><span>Centro de costos</span></button>
       <button id="tabBitacora" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-clipboard-list campatrack-side-ico" aria-hidden="true"></i><span>Bitácora</span></button>
+      <button id="tabAuditoria" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-clipboard-check campatrack-side-ico" aria-hidden="true"></i><span>Auditoría</span></button>
       <button id="tabUsuarios" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-users campatrack-side-ico" aria-hidden="true"></i><span>Usuarios</span></button>
     </nav>
     <div class="campatrack-sidebar-spacer" aria-hidden="true"></div>
@@ -1037,59 +1037,10 @@
     </div>
   </section>
 
-  <section id="modeloModule" class="hidden" aria-label="Módulo MODELO">
-    <div class="data-wrap">
-      <h2 class="data-title">MODELO</h2>
-      <p class="data-subtitle">Tabla unificada de planning + data + relaciones.</p>
-
-      <div class="data-actions">
-        <button id="rebuildModeloBtn" type="button" class="btn-toolbar btn-primary">Regenerar modelo</button>
-      </div>
-
-      <div class="table-card modelo-segmentadores-card">
-        <div class="data-wrap modelo-segmentadores-inner">
-          <h3 class="modelo-segmentadores-title">SEGMENTADORES</h3>
-          <div class="data-actions modelo-seg-toolbar">
-            <select id="segField">
-              <option value="tipo">tipo</option>
-              <option value="programa">programa</option>
-              <option value="intake">intake</option>
-              <option value="plataforma">plataforma</option>
-              <option value="tracking">tracking</option>
-              <option value="fechaMes">fecha (mes)</option>
-            </select>
-            <select id="segType">
-              <option value="dropdown">dropdown</option>
-              <option value="botones">botones</option>
-              <option value="lista">lista</option>
-            </select>
-            <button id="addSegmentadorBtn" type="button" class="btn-toolbar">Agregar segmentador</button>
-          </div>
-          <div id="segmentadoresContainer" class="segmentadores-container"></div>
-        </div>
-      </div>
-
-      <div class="table-card">
-        <div class="table-scroll">
-          <table class="data-table modelo-resumen-table">
-            <thead>
-              <tr>
-                <th>Total registros</th>
-                <th>Total campañas</th>
-                <th>Total inversión</th>
-              </tr>
-            </thead>
-            <tbody id="modeloTbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <section id="medidasModule" class="hidden" aria-label="Módulo MEDIDAS">
     <div class="data-wrap">
       <h2 class="data-title">MEDIDAS</h2>
-      <p class="data-subtitle">Probar medidas en tiempo real usando el modelo analítico.</p>
+      <p class="data-subtitle">Probar medidas en tiempo real sobre la misma vista unificada (planning + relaciones + data) que usa el dashboard.</p>
 
       <div class="data-actions">
         <button id="addMedidaBtn" type="button" class="btn-toolbar btn-primary">+ Crear medida</button>
@@ -1362,6 +1313,75 @@
               </tr>
             </thead>
             <tbody id="adsReportTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="auditoriaModule" class="hidden users-module-saas" aria-label="Módulo Auditoría">
+    <div class="users-wrap">
+      <div class="users-list-toolbar table-card">
+        <div>
+          <h1 class="users-list-title">Auditoría</h1>
+          <p class="users-list-lead">Historial de cambios en Planning y Data. Por defecto solo ves el equipo de tu sesión; quien tenga acceso global (equipo «todos») ve todos los registros.</p>
+        </div>
+        <div class="users-list-toolbar-actions">
+          <button type="button" id="auditExportBtn" class="btn-toolbar btn-primary"><i class="fa-solid fa-file-excel" aria-hidden="true"></i> Exportar Excel</button>
+        </div>
+      </div>
+      <div class="data-filters-panel data-filters-saas audit-filters-panel" role="region" aria-label="Filtros de auditoría">
+        <label class="data-filter-field data-filter-saas-field">
+          <span class="planning-filter-label">Módulo</span>
+          <select id="auditFilterModulo" class="planning-filter-control" aria-label="Filtrar por módulo">
+            <option value="">Todos</option>
+            <option value="planning">Planning</option>
+            <option value="data">Data</option>
+          </select>
+        </label>
+        <label class="data-filter-field data-filter-saas-field">
+          <span class="planning-filter-label">Usuario</span>
+          <input id="auditFilterUsuario" class="planning-filter-control planning-search-input" type="search" placeholder="Usuario…" autocomplete="off" aria-label="Filtrar por usuario" />
+        </label>
+        <label class="data-filter-field data-filter-saas-field">
+          <span class="planning-filter-label">Acción</span>
+          <select id="auditFilterAccion" class="planning-filter-control" aria-label="Filtrar por acción">
+            <option value="">Todas</option>
+            <option value="crear">crear</option>
+            <option value="editar">editar</option>
+            <option value="eliminar">eliminar</option>
+          </select>
+        </label>
+        <label class="data-filter-field data-filter-saas-field">
+          <span class="planning-filter-label">Desde</span>
+          <input id="auditFilterFechaDesde" class="planning-filter-control" type="date" aria-label="Fecha desde" />
+        </label>
+        <label class="data-filter-field data-filter-saas-field">
+          <span class="planning-filter-label">Hasta</span>
+          <input id="auditFilterFechaHasta" class="planning-filter-control" type="date" aria-label="Fecha hasta" />
+        </label>
+        <div class="data-filter-field data-filter-saas-field audit-filter-actions">
+          <span class="planning-filter-label" aria-hidden="true">&nbsp;</span>
+          <button type="button" id="auditFilterApplyBtn" class="btn-toolbar btn-primary">Aplicar filtros</button>
+        </div>
+      </div>
+      <p id="auditEmpty" class="users-list-lead table-card audit-empty-msg hidden" role="status">No hay registros de auditoría para los filtros seleccionados.</p>
+      <div class="table-card data-table-card-saas audit-table-card" aria-label="Tabla de auditoría">
+        <div class="data-table-wrap data-table-wrap-saas" role="region">
+          <table class="data-table data-table-saas-general audit-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>Módulo</th>
+                <th>Acción</th>
+                <th>Campo</th>
+                <th>Descripción</th>
+                <th>Valor anterior</th>
+                <th>Valor nuevo</th>
+              </tr>
+            </thead>
+            <tbody id="auditTbody"></tbody>
           </table>
         </div>
       </div>

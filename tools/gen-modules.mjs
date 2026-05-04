@@ -17,7 +17,7 @@ function bucketForLine(line) {
   if (line >= 3738 && line <= 6153) return "data";
   if (line >= 6154 && line <= 6699) return "reportes";
   if (line >= 6702 && line <= 6882) return "relaciones";
-  if (line >= 6883 && line <= 7032) return "modelo";
+  if (line >= 6883 && line <= 7032) return "medidas";
   if (line >= 7033 && line <= 7104) return "data";
   if (line >= 7105 && line <= 7561) return "medidas";
   if (line >= 7562 && line <= 7695) return "relaciones";
@@ -52,7 +52,7 @@ for (const k of Object.keys(byMod)) {
 
 fs.mkdirSync(modulesDir, { recursive: true });
 
-const moduleOrder = ["planning", "data", "reportes", "relaciones", "modelo", "medidas", "dashboard"];
+const moduleOrder = ["planning", "data", "reportes", "relaciones", "medidas", "dashboard"];
 const header =
   "/**\n * Re-exportaciones agrupadas por dominio.\n * La implementación completa está en ../_app.impl.js (sin cambios de lógica).\n */\n";
 

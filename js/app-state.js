@@ -54,6 +54,13 @@ export function ensureCampatrackUsersDraftShape() {
   return appState.dataDraft.campatrack_users_db;
 }
 
+/** Historial de auditoría (planning / data); persiste en el bundle API bajo `auditoria`. */
+export function ensureAuditoriaDraftShape() {
+  if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
+  if (!Array.isArray(appState.dataDraft.auditoria)) appState.dataDraft.auditoria = [];
+  return appState.dataDraft.auditoria;
+}
+
 export function getPlanningRecordIdSeq() {
   return ensurePlanningDraftShape().recordIdSeq;
 }
@@ -146,6 +153,11 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   }
   if (!Array.isArray(appState.dataDraft.campatrack_users_db)) appState.dataDraft.campatrack_users_db = [];
 
+  if (!Object.prototype.hasOwnProperty.call(bundle, "auditoria") || !Array.isArray(bundle.auditoria)) {
+    appState.dataDraft.auditoria = [];
+  }
+  if (!Array.isArray(appState.dataDraft.auditoria)) appState.dataDraft.auditoria = [];
+
   console.log("Relaciones después de hydrate:", appState.dataDraft.relaciones);
   try {
     if (typeof globalThis.__campatrackRebuildRelacionesTable === "function") {
@@ -175,6 +187,13 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   } catch (_) {
     /* ignore */
   }
+  try {
+    if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+      globalThis.__campatrackRebuildAuditoriaAfterHydrate();
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 export async function initAppState(options = {}) {
@@ -198,6 +217,7 @@ export async function initAppState(options = {}) {
     ensureDataGeneralDraftShape();
     ensureRelacionesDraftShape();
     ensureCampatrackUsersDraftShape();
+    ensureAuditoriaDraftShape();
     return;
   }
   let bundle = row.data;

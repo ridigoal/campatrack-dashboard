@@ -13690,3 +13690,29 @@ body.dark-mode #mainAppShell .users-estado-badge--off {
   border-color: #475569;
 }
 
+/* Módulo Auditoría */
+#mainAppShell #auditoriaModule .audit-filters-panel {
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+#mainAppShell #auditoriaModule .audit-filter-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 10rem;
+}
+
+#mainAppShell #auditoriaModule .audit-empty-msg {
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+}
+
+#mainAppShell #auditoriaModule .audit-table .audit-col-json {
+  max-width: 14rem;
+  font-size: 0.8125rem;
+  word-break: break-word;
+  vertical-align: top;
+}
+
