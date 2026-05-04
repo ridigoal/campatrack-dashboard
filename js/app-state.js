@@ -1,6 +1,6 @@
 /**
- * Estado central (piloto Planning). El resto del bundle sigue en `_app.impl.js` / appMemoryKV.
- * `dataDraft.planning` es la única fuente de verdad de filas Planning en memoria.
+ * Estado central: Planning y Data general viven en `dataDraft`.
+ * El resto del bundle sigue en `_app.impl.js` / appMemoryKV.
  */
 
 export const appState = {
@@ -27,6 +27,13 @@ export function ensurePlanningDraftShape() {
   if (!Array.isArray(p.records)) p.records = [];
   if (!Number.isFinite(Number(p.recordIdSeq)) || Number(p.recordIdSeq) < 1) p.recordIdSeq = 1;
   return p;
+}
+
+/** Filas DATA → General (todas las equipos con `teamId`); misma idea que `planning.records`. */
+export function ensureDataGeneralDraftShape() {
+  if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
+  if (!Array.isArray(appState.dataDraft.data_general)) appState.dataDraft.data_general = [];
+  return appState.dataDraft.data_general;
 }
 
 export function getPlanningRecordIdSeq() {
@@ -73,7 +80,7 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   appState.dataOriginal = cloneOrig;
   if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
   for (const key of Object.keys(cloneDraft)) {
-    if (key === "planning_data" || key === "planning") continue;
+    if (key === "planning_data" || key === "planning" || key === "data_general") continue;
     appState.dataDraft[key] = cloneDraft[key];
   }
   const slice = normalizePlanningSliceFromBundle(bundle.planning_data);
@@ -84,6 +91,14 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
   try {
     if (typeof globalThis.__campatrackSyncPlanningAfterHydrate === "function") {
       globalThis.__campatrackSyncPlanningAfterHydrate();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  ensureDataGeneralDraftShape();
+  try {
+    if (typeof globalThis.__campatrackHydrateDataGeneralFromBundle === "function") {
+      globalThis.__campatrackHydrateDataGeneralFromBundle(bundle);
     }
   } catch (_) {
     /* ignore */
@@ -108,6 +123,7 @@ export async function initAppState(options = {}) {
     appState.dataOriginal = {};
     appState.dataDraft = {};
     ensurePlanningDraftShape();
+    ensureDataGeneralDraftShape();
     return;
   }
   let bundle = row.data;

@@ -1,6 +1,7 @@
 import {
   appState,
   ensurePlanningDraftShape,
+  ensureDataGeneralDraftShape,
   getPlanningRecordIdSeq,
   setPlanningRecordIdSeq,
   bumpAppStatePendingChanges,
@@ -348,7 +349,6 @@ try {
 } catch (_) {
   /* ignore */
 }
-let dataRealMergedCache = null;
 let dataAdsReportMergedCache = null;
 let dataAnunciosMergedCache = null;
 let relacionesMergedCache = null;
@@ -1479,7 +1479,7 @@ function buildMemorySnapshotForPublish() {
     consumo_por_campaña: JSON.parse(JSON.stringify(mergeConsumoForPersist())),
     programs: JSON.parse(JSON.stringify(programs)),
     bitacora_data: JSON.parse(JSON.stringify(bitacoraData)),
-    data_general: serializeDataReal(dataRealMergedCache || dataReal),
+    data_general: serializeDataReal(ensureDataGeneralDraftShape()),
     data_ads_report: serializeDataReal(dataAdsReportMergedCache || dataAdsReport),
     data_anuncios: serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios),
     campaniasUnicasData: JSON.parse(JSON.stringify(campaniasUnicasMergedCache || campaniasUnicasData)),
@@ -1546,18 +1546,19 @@ function applyMemorySnapshotFromBundle(snap) {
     rows.forEach((r) => bitacoraData.push(r));
   }
   if (snap.data_general) {
+    const dg = ensureDataGeneralDraftShape();
+    const base = dg.slice();
     const rows = deserializeDataReal(snap.data_general);
     migrateMissingTeamIdOnRows(rows);
     const distinctTeams = new Set(rows.map(normalizeRowTeamId));
-    if (distinctTeams.size > 1) dataRealMergedCache = rows;
-    else {
-      const base = Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk();
-      dataRealMergedCache = mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
-    }
-    dataReal = dataRealMergedCache.filter(rowBelongsToCurrentTeam);
+    const merged =
+      distinctTeams.size > 1 ? rows : mergeRowsByTeamId(base, rows, getCurrentTeamId(), normalizeRowTeamId);
+    dg.length = 0;
+    merged.forEach((r) => dg.push(r));
+    syncDataRealViewFromDraft();
   } else {
-    dataRealMergedCache = [];
-    dataReal = [];
+    ensureDataGeneralDraftShape().length = 0;
+    syncDataRealViewFromDraft();
   }
   if (snap.data_ads_report) {
     const rows = deserializeDataReal(snap.data_ads_report);
@@ -1687,7 +1688,6 @@ function flushAllPersistedStateToDisk() {
       console.warn("flush bitácora", err);
     }
     refreshTeamScopedDataCachesForSnapshot();
-    guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataRealMergedCache || dataReal));
     guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache || dataAdsReport));
     guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios));
     guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache || campaniasUnicasData);
@@ -5135,6 +5135,34 @@ function initBitacoraModule() {
 // =========================
 
 let dataReal = [];
+/** Sincroniza `dataReal` con el equipo actual desde `appState.dataDraft.data_general` (mismas referencias de objeto). */
+function syncDataRealViewFromDraft() {
+  dataReal.length = 0;
+  ensureDataGeneralDraftShape().forEach((r) => {
+    if (rowBelongsToCurrentTeam(r)) dataReal.push(r);
+  });
+}
+
+/** Sustituye en el draft las filas del equipo actual por `mergedSorted` (p. ej. tras upsert). */
+function replaceCurrentTeamDataGeneralFromMerged(mergedSorted) {
+  const dg = ensureDataGeneralDraftShape();
+  const tid = getCurrentTeamId();
+  const full = mergeRowsByTeamId(dg, mergedSorted, tid, normalizeRowTeamId);
+  dg.length = 0;
+  full.forEach((r) => dg.push(r));
+  syncDataRealViewFromDraft();
+}
+
+/** Quita del draft todas las filas del equipo actual. */
+function clearDataGeneralCurrentTeamInDraft() {
+  const dg = ensureDataGeneralDraftShape();
+  const tid = getCurrentTeamId();
+  const next = dg.filter((r) => String(normalizeRowTeamId(r)) !== String(tid));
+  dg.length = 0;
+  next.forEach((r) => dg.push(r));
+  syncDataRealViewFromDraft();
+}
+
 let dataAdsReport = [];
 /** Filas DATA → Anuncios (carga solo desde pestaña Anuncios). */
 let dataAnuncios = [];
@@ -5575,7 +5603,7 @@ function limpiarDataSeleccionada(selection) {
   if (!clearGeneral && !clearAnuncios) return;
 
   if (clearGeneral) {
-    dataReal = [];
+    clearDataGeneralCurrentTeamInDraft();
     historialCargas = [];
     selectedDataIds = new Set();
     limpiarFiltrosUiDataGeneral();
@@ -5660,7 +5688,7 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     cc_data: leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
-    data_general: leerJsonLocalStorage(LS_KEYS.dataReal, "dataReal"),
+    data_general: serializeDataReal(ensureDataGeneralDraftShape()),
     data_ads_report: leerJsonLocalStorage(LS_KEYS.dataAdsReport, "dataAdsReport"),
     data_anuncios: leerJsonLocalStorage(LS_KEYS.dataAnuncios, "dataAnuncios"),
     relaciones: leerJsonLocalStorage(LS_KEYS.relaciones),
@@ -5918,6 +5946,9 @@ async function cargarDataDesdeBackend() {
     console.log("Data aplicada al sistema");
     hydrateAppStateDraftFromApiBundle(bundle);
     if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+    if (typeof renderTablaData === "function") renderTablaData();
+    if (typeof setFechaActualData === "function") setFechaActualData();
+    if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
     if (typeof renderDashboard === "function") renderDashboard();
   } catch (err) {
     console.error("Error cargando data:", err);
@@ -5976,10 +6007,10 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
       return "";
     }
 
-    const dataReal =
+    const bundlePayload =
       opts.fetchedFromLogin === true ? opts.preloadedBundle : await cargarDataUsuario(user);
 
-    if (dataReal == null) {
+    if (bundlePayload == null) {
       console.log("Sin data para este usuario");
       if (aplicarYLuegoRecargar) {
         persistCampatrackSessionToBrowserStorage();
@@ -5996,9 +6027,9 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
       return "";
     }
 
-    console.log("DATA API:", dataReal);
+    console.log("DATA API:", bundlePayload);
 
-    if (!bundleTieneDatosUtiles(dataReal)) {
+    if (!bundleTieneDatosUtiles(bundlePayload)) {
       console.log("Sin datos de bundle para aplicar para este usuario");
       if (aplicarYLuegoRecargar) {
         persistCampatrackSessionToBrowserStorage();
@@ -6015,7 +6046,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
       return "";
     }
 
-    if (!aplicarYLuegoRecargar) return JSON.stringify(dataReal);
+    if (!aplicarYLuegoRecargar) return JSON.stringify(bundlePayload);
 
     try {
       appMemoryKV.clear();
@@ -6031,8 +6062,8 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     } catch (_) {}
 
     for (const clave of EXPORT_BUNDLE_KEYS) {
-      if (!Object.prototype.hasOwnProperty.call(dataReal, clave)) continue;
-      const v = dataReal[clave];
+      if (!Object.prototype.hasOwnProperty.call(bundlePayload, clave)) continue;
+      const v = bundlePayload[clave];
       if (v == null || v === undefined) continue;
       try {
         appMemoryKV.setItem(clave, JSON.stringify(v));
@@ -6105,6 +6136,30 @@ function deserializeDataReal(list) {
     _id: String(r?._id || generateDataRowId()),
     fecha: r?.fecha instanceof Date ? r.fecha : parseFechaData(r?.fecha)
   })).filter((r) => r.fecha instanceof Date && !Number.isNaN(r.fecha.getTime()));
+}
+
+/** Rellena `appState.dataDraft.data_general` desde el bundle API (GET /api/data). */
+function hydrateDataGeneralFromApiBundle(bundle) {
+  const dg = ensureDataGeneralDraftShape();
+  dg.length = 0;
+  if (!bundle || bundle.data_general == null) {
+    syncDataRealViewFromDraft();
+    return;
+  }
+  const raw = normalizarArrayPersistido(bundle.data_general) ?? bundle.data_general;
+  const rows = deserializeDataReal(Array.isArray(raw) ? raw : []);
+  migrateMissingTeamIdOnRows(rows);
+  const distinctTeams = new Set(rows.map(normalizeRowTeamId));
+  const merged =
+    distinctTeams.size > 1 ? rows : mergeRowsByTeamId([], rows, getCurrentTeamId(), normalizeRowTeamId);
+  merged.forEach((r) => dg.push(r));
+  syncDataRealViewFromDraft();
+}
+
+try {
+  globalThis.__campatrackHydrateDataGeneralFromBundle = hydrateDataGeneralFromApiBundle;
+} catch (_) {
+  /* ignore */
 }
 
 function serializeDataAnuncios(list) {
@@ -6455,7 +6510,6 @@ function guardarTodo(opts = {}) {
     appMemoryKV.setItem(LS_PLANNING_DATA, JSON.stringify({ records: mergedPlan, recordIdSeq: getPlanningRecordIdSeq() }));
     if (incluirTablasData) {
       refreshTeamScopedDataCachesForSnapshot();
-      appMemoryKV.setItem("data_general", JSON.stringify(serializeDataReal(dataRealMergedCache || dataReal)));
       appMemoryKV.setItem("data_anuncios", JSON.stringify(serializeDataAnuncios(dataAnunciosMergedCache || dataAnuncios)));
     }
     refreshTeamScopedDataCachesForSnapshot();
@@ -6468,7 +6522,7 @@ function guardarTodo(opts = {}) {
 }
 
 function hasDataGeneralLoaded() {
-  return Array.isArray(dataReal) && dataReal.length > 0;
+  return ensureDataGeneralDraftShape().some((r) => rowBelongsToCurrentTeam(r));
 }
 
 function hasAnyDataLoaded() {
@@ -6562,11 +6616,8 @@ function syncDataRelacionesModeloConsistency() {
 }
 
 function readFullDataRealRowsFromDisk() {
-  const rawGeneral = cargarDesdeLocalStorage("data_general") ?? cargarDesdeLocalStorage(LS_KEYS.dataReal) ?? cargarDesdeLocalStorage("dataReal");
-  const storedData = normalizarArrayPersistido(rawGeneral);
-  const rows = storedData ? deserializeDataReal(storedData) : [];
-  migrateMissingTeamIdOnRows(rows);
-  return rows;
+  /** DATA general vive en `appState.dataDraft.data_general`; ya no se lee desde almacén clave-valor. */
+  return [];
 }
 
 function readFullDataAdsRowsFromDisk() {
@@ -6615,12 +6666,7 @@ function readFullModeloFromDisk() {
 
 function refreshTeamScopedDataCachesForSnapshot() {
   const tid = getCurrentTeamId();
-  dataRealMergedCache = mergeRowsByTeamId(
-    Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk(),
-    dataReal,
-    tid,
-    normalizeRowTeamId
-  );
+  syncDataRealViewFromDraft();
   dataAdsReportMergedCache = mergeRowsByTeamId(
     Array.isArray(dataAdsReportMergedCache) && dataAdsReportMergedCache.length ? dataAdsReportMergedCache : readFullDataAdsRowsFromDisk(),
     dataAdsReport,
@@ -6661,12 +6707,7 @@ function refreshTeamScopedDataCachesForSnapshot() {
 
 function persistDataState() {
   const tid = getCurrentTeamId();
-  dataRealMergedCache = mergeRowsByTeamId(
-    Array.isArray(dataRealMergedCache) && dataRealMergedCache.length ? dataRealMergedCache : readFullDataRealRowsFromDisk(),
-    dataReal,
-    tid,
-    normalizeRowTeamId
-  );
+  syncDataRealViewFromDraft();
   dataAdsReportMergedCache = mergeRowsByTeamId(
     Array.isArray(dataAdsReportMergedCache) && dataAdsReportMergedCache.length ? dataAdsReportMergedCache : readFullDataAdsRowsFromDisk(),
     dataAdsReport,
@@ -6685,7 +6726,6 @@ function persistDataState() {
     tid,
     normalizeRowTeamId
   );
-  guardarEnLocalStorage(LS_KEYS.dataReal, serializeDataReal(dataRealMergedCache));
   guardarEnLocalStorage(LS_KEYS.dataAdsReport, serializeDataReal(dataAdsReportMergedCache));
   guardarEnLocalStorage(LS_KEYS.dataAnuncios, serializeDataAnuncios(dataAnunciosMergedCache));
   guardarEnLocalStorage(LS_KEYS.campaniasUnicasData, campaniasUnicasMergedCache);
@@ -6739,7 +6779,23 @@ function persistModeloState() {
 }
 
 function hydratarDesdeLocalStorage() {
-  let dr = readFullDataRealRowsFromDisk();
+  ensureDataGeneralDraftShape();
+  const dg = ensureDataGeneralDraftShape();
+  if (!dg.length) {
+    try {
+      const raw = appMemoryKV.getItem("data_general") ?? appMemoryKV.getItem(LS_KEYS.dataReal) ?? appMemoryKV.getItem("dataReal");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const stored = normalizarArrayPersistido(parsed) ?? parsed;
+        const rows = deserializeDataReal(Array.isArray(stored) ? stored : []);
+        migrateMissingTeamIdOnRows(rows);
+        rows.forEach((r) => dg.push(r));
+      }
+    } catch (err) {
+      console.warn("Migración one-shot data_general desde memoria", err);
+    }
+  }
+  syncDataRealViewFromDraft();
   let dAds = readFullDataAdsRowsFromDisk();
   let dAnu = readFullDataAnunciosRowsFromDisk();
   if (!dAnu.length && dAds.length) {
@@ -6753,10 +6809,8 @@ function hydratarDesdeLocalStorage() {
       console.warn("No se pudo persistir migración data anuncios", err);
     }
   }
-  dataRealMergedCache = dr;
   dataAdsReportMergedCache = dAds;
   dataAnunciosMergedCache = dAnu;
-  dataReal = dr.filter(rowBelongsToCurrentTeam);
   dataAdsReport = dAds.filter(rowBelongsToCurrentTeam);
   dataAnuncios = dAnu.filter(rowBelongsToCurrentTeam);
   console.log("General:", dataReal.length);
@@ -7170,6 +7224,8 @@ function filtrarData() {
 }
 
 function renderTablaData() {
+  console.log("DATA módulo:", appState.dataDraft.data_general);
+  syncDataRealViewFromDraft();
   const tbody = document.getElementById("dataTbody");
   if (!tbody) return;
   const regCount = document.getElementById("dataGeneralRegistrosCount");
@@ -7312,7 +7368,12 @@ function deshacerUltimaCarga() {
   const last = historialCargas.pop();
   if (!last) return;
   const ids = new Set(last.registros.map((r) => String(r._id)));
-  dataReal = dataReal.filter((r) => !ids.has(String(r._id)));
+  const dg = ensureDataGeneralDraftShape();
+  for (let i = dg.length - 1; i >= 0; i -= 1) {
+    const r = dg[i];
+    if (rowBelongsToCurrentTeam(r) && ids.has(String(r._id))) dg.splice(i, 1);
+  }
+  syncDataRealViewFromDraft();
   ids.forEach((id) => selectedDataIds.delete(String(id)));
   persistDataState();
   actualizarFiltrosCache(); refreshFechaFiltersUI(); renderTablaData(); renderTablaCampañas(); renderRelacionesDataList();
@@ -7328,7 +7389,12 @@ async function eliminarFilasSeleccionadas() {
   });
   if (!ok) return;
   const ids = new Set(Array.from(selectedDataIds).map((x) => String(x)));
-  dataReal = dataReal.filter((r) => !ids.has(String(r._id)));
+  const dg = ensureDataGeneralDraftShape();
+  for (let i = dg.length - 1; i >= 0; i -= 1) {
+    const r = dg[i];
+    if (rowBelongsToCurrentTeam(r) && ids.has(String(r._id))) dg.splice(i, 1);
+  }
+  syncDataRealViewFromDraft();
   historialCargas = historialCargas
     .map((b) => ({ ...b, registros: b.registros.filter((r) => !ids.has(String(r._id))) }))
     .filter((b) => b.registros.length > 0);
@@ -7416,7 +7482,7 @@ function initDataLoadModal() {
     const newRows = report.validas.map((r) => ({ ...r, _id: generateDataRowId() }));
     const { data: merged, insertadas, actualizadas, registrosInsertados } = upsertDataRowsLote(newRows, dataReal);
     const mergedSorted = ordenarPorFecha(merged);
-    dataReal = mergedSorted;
+    replaceCurrentTeamDataGeneralFromMerged(mergedSorted);
     if (registrosInsertados.length) historialCargas.push({ registros: registrosInsertados, timestamp: new Date() });
     input.value = "";
     close();
@@ -8870,7 +8936,7 @@ function renderFechaActualDataInfo() {
   el.textContent = `📅 Data actualizada hasta: ${formatDateInputFromDate(fechaActualData)}`;
 }
 
-/** Última fecha en `data_general` (localStorage), coherente con el módulo DATA. */
+/** Última fecha en `appState.dataDraft.data_general` (módulo DATA). */
 function mostrarFechaActualizacion() {
   const el = document.getElementById("fecha-actualizacion");
   if (!el) return;
@@ -8880,20 +8946,7 @@ function mostrarFechaActualizacion() {
     el.classList.add("hidden");
   };
 
-  let data = [];
-  try {
-    const raw = appMemoryKV.getItem("data_general");
-    if (!raw) {
-      vaciar();
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    data = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    vaciar();
-    return;
-  }
-
+  const data = ensureDataGeneralDraftShape();
   if (!data.length) {
     vaciar();
     return;
@@ -8902,7 +8955,7 @@ function mostrarFechaActualizacion() {
   const fechas = [];
   for (const d of data) {
     if (!d || typeof d !== "object") continue;
-    const dt = parseFechaData(d.fecha);
+    const dt = d.fecha instanceof Date ? d.fecha : parseFechaData(d.fecha);
     if (dt instanceof Date && !Number.isNaN(dt.getTime())) fechas.push(dt.getTime());
   }
   if (!fechas.length) {
