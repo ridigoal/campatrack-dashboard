@@ -620,9 +620,8 @@ function persistCentrosCostos() {
     }
     guardarTodo({ incluirTablasData: false });
     guardarDebounce();
-  } else {
-    notifyDraftChanged();
   }
+  registerUnpublishedDraftMutation();
 }
 
 function persistConsumoPorCampaña() {
@@ -1449,13 +1448,8 @@ function shouldDeferDiskPersistence() {
   return appDeferredDiskPersistence === true;
 }
 
-let draftNotifyRaf = null;
-
 function cancelPendingDraftNotify() {
-  if (draftNotifyRaf != null) {
-    cancelAnimationFrame(draftNotifyRaf);
-    draftNotifyRaf = null;
-  }
+  /* Reservado si en el futuro se reintroduce debounce de notificaciones. */
 }
 
 function withDraftNotificationsSuppressed(fn) {
@@ -1467,17 +1461,21 @@ function withDraftNotificationsSuppressed(fn) {
   }
 }
 
+/**
+ * Marca que hay cambios respecto a lo último publicado: evita que un GET /api/data en segundo plano
+ * (p. ej. al abrir el Dashboard) sobrescriba el borrador en memoria.
+ */
+function registerUnpublishedDraftMutation() {
+  if (appSuppressDraftNotifications > 0) return;
+  appPendingPublishCount += 1;
+  bumpAppStatePendingChanges();
+  updatePublishDraftToolbar();
+}
+
 function notifyDraftChanged() {
   if (!shouldDeferDiskPersistence()) return;
   if (appSuppressDraftNotifications > 0) return;
-  if (draftNotifyRaf != null) return;
-  draftNotifyRaf = requestAnimationFrame(() => {
-    draftNotifyRaf = null;
-    if (appSuppressDraftNotifications > 0) return;
-    appPendingPublishCount += 1;
-    bumpAppStatePendingChanges();
-    updatePublishDraftToolbar();
-  });
+  registerUnpublishedDraftMutation();
 }
 
 function runWithDiskPersistenceEnabled(fn) {
@@ -1934,7 +1932,8 @@ function initDraftPublishToolbar() {
   updatePublishDraftToolbar();
 }
 
-function persistPlanningData() {
+function persistPlanningData(opts = {}) {
+  const fromBootstrap = opts.fromBootstrap === true;
   recomputePlanningMergedCacheFromRecords();
   const merged = planningMergedRecordsCache || planningDraftRecords().slice();
   const maxMergedId = merged.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
@@ -1949,9 +1948,8 @@ function persistPlanningData() {
     } catch (err) {
       console.warn("No se pudo guardar planning_data", err);
     }
-  } else {
-    notifyDraftChanged();
   }
+  if (!fromBootstrap) registerUnpublishedDraftMutation();
   syncCentroCostosYConsumoDesdePlanning();
   REGENERAR_MODELO();
   if (!shouldDeferDiskPersistence()) {
@@ -4416,17 +4414,26 @@ planningBody?.addEventListener("dblclick", (event) => {
   const record = pr.find((r) => samePlanningRecordId(r.id, recordIdRaw));
   if (!record) return;
 
+  const commitPlanningRecordById = (apply, opts = {}) => {
+    const records = ensurePlanningDraftShape().records;
+    const idx = records.findIndex((r) => samePlanningRecordId(r?.id, recordIdRaw));
+    if (idx < 0) return;
+    const rec = records[idx];
+    apply(rec, idx);
+    console.log("Registro actualizado:", records[idx]);
+    if (opts.planningRowRefreshRecord) replacePlanningRowElement(records[idx]);
+    else rebuildPlanningTable();
+    persistPlanningData();
+  };
+
   const bindNumericCommit = (input, apply, opts = {}) => {
-    const rowRefreshRecord = opts.planningRowRefreshRecord;
     let aborted = false;
     const commit = () => {
       if (aborted) return;
-      apply(input.value);
-      if (rowRefreshRecord) replacePlanningRowElement(rowRefreshRecord);
-      else rebuildPlanningTable();
-      persistPlanningData();
+      commitPlanningRecordById((rec) => apply(rec, input.value), opts);
     };
     input.addEventListener("blur", commit, { once: true });
+    input.addEventListener("change", commit);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -4453,7 +4460,7 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => setPlanningMonthlyInvFromCell(record, monthIdx, raw), {
+    bindNumericCommit(input, (rec, raw) => setPlanningMonthlyInvFromCell(rec, monthIdx, raw), {
       planningRowRefreshRecord: record
     });
     return;
@@ -4472,7 +4479,7 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => setPlanningMonthlyLeadFromCell(record, monthIdx, raw), {
+    bindNumericCommit(input, (rec, raw) => setPlanningMonthlyLeadFromCell(rec, monthIdx, raw), {
       planningRowRefreshRecord: record
     });
     return;
@@ -4491,7 +4498,7 @@ planningBody?.addEventListener("dblclick", (event) => {
     td.appendChild(input);
     input.focus();
     input.select();
-    bindNumericCommit(input, (raw) => setPlanningMonthlyCplFromCell(record, monthIdx, raw), {
+    bindNumericCommit(input, (rec, raw) => setPlanningMonthlyCplFromCell(rec, monthIdx, raw), {
       planningRowRefreshRecord: record
     });
     return;
@@ -4511,10 +4518,10 @@ planningBody?.addEventListener("dblclick", (event) => {
     input.select();
     bindNumericCommit(
       input,
-      (raw) => {
-        if (!record.metas) record.metas = {};
+      (rec, raw) => {
+        if (!rec.metas) rec.metas = {};
         const nextValue = String(raw ?? "").trim();
-        record.metas[metaKey] = nextValue === "" ? "" : Number(nextValue);
+        rec.metas[metaKey] = nextValue === "" ? "" : Number(nextValue);
       },
       { planningRowRefreshRecord: record }
     );
@@ -4537,14 +4544,14 @@ planningBody?.addEventListener("dblclick", (event) => {
     const commit = () => {
       if (aborted) return;
       const v = input.value.trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-        if (field === "fechaInicio") record.fechaInicio = v;
-        else record.fechaFin = v;
-      }
-      rebuildPlanningTable();
-      persistPlanningData();
+      commitPlanningRecordById((rec) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+        if (field === "fechaInicio") rec.fechaInicio = v;
+        else rec.fechaFin = v;
+      });
     };
     input.addEventListener("blur", commit, { once: true });
+    input.addEventListener("change", commit);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -4571,9 +4578,9 @@ planningBody?.addEventListener("dblclick", (event) => {
     input.select();
     bindNumericCommit(
       input,
-      (raw) => {
-        if (field === "presupuesto") applyPlanningPresupuestoTotalFromCell(record, raw);
-        else applyPlanningLeadsTotalFromCell(record, raw);
+      (rec, raw) => {
+        if (field === "presupuesto") applyPlanningPresupuestoTotalFromCell(rec, raw);
+        else applyPlanningLeadsTotalFromCell(rec, raw);
       },
       { planningRowRefreshRecord: record }
     );
@@ -4592,11 +4599,12 @@ planningBody?.addEventListener("dblclick", (event) => {
     let aborted = false;
     const commit = () => {
       if (aborted) return;
-      record[field] = String(input.value ?? "").trim();
-      rebuildPlanningTable();
-      persistPlanningData();
+      commitPlanningRecordById((rec) => {
+        rec[field] = String(input.value ?? "").trim();
+      });
     };
     input.addEventListener("blur", commit, { once: true });
+    input.addEventListener("change", commit);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -4618,7 +4626,7 @@ planningDraftRecords().forEach((r) => {
 });
 hydratarCentrosCostos();
 syncCentroCostosYConsumoDesdePlanning();
-if (planningIdsRepaired) persistPlanningData();
+if (planningIdsRepaired) persistPlanningData({ fromBootstrap: true });
 rebuildPlanningTable();
 
 if (programNameInput) programNameInput.disabled = true;
@@ -4676,9 +4684,8 @@ function persistBitacoraData() {
       console.warn("No se pudo guardar bitacora_data", err);
     }
     guardarDebounce();
-  } else {
-    notifyDraftChanged();
   }
+  registerUnpublishedDraftMutation();
   syncCatalogosSistemaDesdeMemoria();
   refreshPlanningCatalogUi();
 }
@@ -5969,6 +5976,18 @@ async function cargarDataDesdeBackend() {
       console.warn("Usuario no definido");
       return;
     }
+    if (appPendingPublishCount > 0) {
+      if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+      if (typeof renderTablaData === "function") renderTablaData();
+      if (typeof setFechaActualData === "function") setFechaActualData();
+      if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
+      if (typeof renderRelacionesTabla === "function") renderRelacionesTabla();
+      if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
+      if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
+      if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
+      if (typeof renderDashboard === "function") renderDashboard();
+      return;
+    }
     console.log("🔥 Cargando data desde backend...");
     const res = await fetch(
       `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(String(user.username))}`
@@ -6633,7 +6652,7 @@ function persistRelacionesAndModeloCleared() {
   guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
-  if (shouldDeferDiskPersistence()) notifyDraftChanged();
+  registerUnpublishedDraftMutation();
 }
 
 function syncDataRelacionesModeloConsistency() {
@@ -6771,7 +6790,7 @@ function persistDataState() {
   guardarTodo();
   syncDataRelacionesModeloConsistency();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
-  if (shouldDeferDiskPersistence()) notifyDraftChanged();
+  registerUnpublishedDraftMutation();
 }
 
 function persistRelacionesState() {
@@ -6779,7 +6798,7 @@ function persistRelacionesState() {
   REGENERAR_MODELO();
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
-  if (shouldDeferDiskPersistence()) notifyDraftChanged();
+  registerUnpublishedDraftMutation();
 }
 
 function persistMedidasState() {
@@ -6792,7 +6811,7 @@ function persistMedidasState() {
   );
   guardarEnLocalStorage(LS_KEYS.medidas, medidasMergedCache);
   if (!shouldDeferDiskPersistence()) guardarDebounce();
-  if (shouldDeferDiskPersistence()) notifyDraftChanged();
+  registerUnpublishedDraftMutation();
 }
 
 function persistModeloState() {
@@ -6807,7 +6826,7 @@ function persistModeloState() {
   guardarEnLocalStorage("modelo", serializeModelo(modeloMergedCache));
   guardarTodo();
   if (!shouldDeferDiskPersistence()) guardarDebounce();
-  if (shouldDeferDiskPersistence()) notifyDraftChanged();
+  registerUnpublishedDraftMutation();
 }
 
 function hydratarDesdeLocalStorage() {
@@ -12430,9 +12449,8 @@ function saveCampatrackStoredUsers(list) {
     } catch (e) {
       console.warn("No se pudo guardar usuarios", e);
     }
-  } else {
-    notifyDraftChanged();
   }
+  registerUnpublishedDraftMutation();
 }
 
 const CAMPATRACK_DEFAULT_USER_AVATAR = "assets/profile-richi.png";

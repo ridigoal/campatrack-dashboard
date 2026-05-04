@@ -78,12 +78,10 @@ function normalizePlanningSliceFromBundle(planningData) {
  * Rellena `dataOriginal` / `dataDraft` y planning / data_general / relaciones desde un bundle (p. ej. GET /api/data).
  * No toca appMemoryKV: eso sigue haciendo `_app.impl.js`.
  *
- * @param {object} bundle
- * @param {{ skipRelacionesHydrate?: boolean }} [opts] Si `skipRelacionesHydrate`, no se reemplaza
- *   `dataDraft.relaciones` desde el bundle (p. ej. refresco del dashboard): el borrador en memoria sigue siendo la fuente de verdad hasta publicar o login completo.
- *   Relaciones: solo parse + asignación desde el bundle (sin finalize/merge/migrate hasta confirmar diagnóstico).
+ * Para no pisar borradores locales hasta publicar/descartar, `cargarDataDesdeBackend` omita esta función
+ * mientras hay cambios pendientes (`appPendingPublishCount`).
  */
-export function hydrateAppStateDraftFromApiBundle(bundle, opts = {}) {
+export function hydrateAppStateDraftFromApiBundle(bundle) {
   if (bundle == null || typeof bundle !== "object" || Array.isArray(bundle)) return;
   const cloneOrig =
     typeof structuredClone === "function" ? structuredClone(bundle) : JSON.parse(JSON.stringify(bundle));
@@ -116,43 +114,30 @@ export function hydrateAppStateDraftFromApiBundle(bundle, opts = {}) {
     /* ignore */
   }
   ensureRelacionesDraftShape();
-  if (opts.skipRelacionesHydrate === true) {
+  let relaciones = bundle.relaciones;
+
+  if (typeof relaciones === "string") {
     try {
-      if (typeof globalThis.__campatrackSyncRelacionesViewFromDraft === "function") {
-        globalThis.__campatrackSyncRelacionesViewFromDraft();
-      }
-    } catch (_) {
-      /* ignore */
+      relaciones = JSON.parse(relaciones);
+    } catch (e) {
+      console.error("Error parseando relaciones:", e);
+      relaciones = [];
     }
-  } else {
-    let relaciones = bundle.relaciones;
-
-    if (typeof relaciones === "string") {
-      try {
-        relaciones = JSON.parse(relaciones);
-      } catch (e) {
-        console.error("Error parseando relaciones:", e);
-        relaciones = [];
-      }
-    }
-
-    if (Array.isArray(relaciones)) {
-      appState.dataDraft.relaciones = relaciones;
-    } else {
-      appState.dataDraft.relaciones = [];
-    }
-
-    console.log("Relaciones después de hydrate:", appState.dataDraft.relaciones);
   }
 
-  if (opts.skipRelacionesHydrate !== true) {
-    try {
-      if (typeof globalThis.__campatrackRebuildRelacionesTable === "function") {
-        globalThis.__campatrackRebuildRelacionesTable();
-      }
-    } catch (_) {
-      /* ignore */
+  if (Array.isArray(relaciones)) {
+    appState.dataDraft.relaciones = relaciones;
+  } else {
+    appState.dataDraft.relaciones = [];
+  }
+
+  console.log("Relaciones después de hydrate:", appState.dataDraft.relaciones);
+  try {
+    if (typeof globalThis.__campatrackRebuildRelacionesTable === "function") {
+      globalThis.__campatrackRebuildRelacionesTable();
     }
+  } catch (_) {
+    /* ignore */
   }
 }
 
