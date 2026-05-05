@@ -4105,7 +4105,7 @@ body {
 
 .row-intake-dates {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   align-items: end;
 }
@@ -4312,6 +4312,42 @@ body {
   padding: 24px 26px;
   max-height: 90vh;
   overflow-y: auto;
+}
+
+/* Planning: edición rápida — solo centro de costo */
+#campaignModal.campaign-modal--edit-cc .modal-content {
+  width: min(400px, 92vw);
+  padding: 16px 18px;
+  max-height: none;
+  overflow: visible;
+}
+
+#campaignModal.campaign-modal--edit-cc .modal-content h2 {
+  font-size: 1.28rem;
+  margin-bottom: 10px;
+}
+
+#campaignModal.campaign-modal--edit-cc .campaign-form {
+  gap: 8px;
+}
+
+#campaignModal.campaign-modal--edit-cc .campaign-form-cc-section {
+  margin: 0;
+}
+
+#campaignModal.campaign-modal--edit-cc .campaign-form-cc-section .hint {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+#campaignModal.campaign-modal--edit-cc .campaign-form-planning-full {
+  display: none !important;
+}
+
+#campaignModal.campaign-modal--edit-cc .modal-actions {
+  margin-top: 12px;
+  padding-top: 10px;
+  gap: 8px;
 }
 
 .modal-content h2 {
@@ -4595,6 +4631,10 @@ body {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 10px;
+}
+
+.campaign-form-cc-section {
+  margin-top: 4px;
 }
 
 .campaign-separator {

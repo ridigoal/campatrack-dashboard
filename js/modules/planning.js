@@ -53,6 +53,7 @@ export {
   getFormValues,
   getLockedBudgetTotalForDays,
   getMonthRange,
+  getPlanningRecordConsumedInvestment,
   getProgramsByType,
   getRecordsLinkedToCentroCostoRow,
   getSaldoDisponibleCentro,

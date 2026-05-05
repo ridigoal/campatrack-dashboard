@@ -1,48 +1,7 @@
 {
   "cc_data": {
-    "centros": [
-      {
-        "id": "cc_1",
-        "agrupador": "Posgrado Regular",
-        "nombreProyecto": "",
-        "nombreCuenta": "",
-        "descripcionServicio": "",
-        "inversionTotal": 2834557
-      },
-      {
-        "id": "cc_2",
-        "agrupador": "Avanti Diplomados",
-        "nombreProyecto": "",
-        "nombreCuenta": "",
-        "descripcionServicio": "",
-        "inversionTotal": 92000
-      },
-      {
-        "id": "cc_3",
-        "agrupador": "Nuevas Maestrías",
-        "nombreProyecto": "",
-        "nombreCuenta": "",
-        "descripcionServicio": "",
-        "inversionTotal": 1345040
-      },
-      {
-        "id": "cc_4",
-        "agrupador": "Nuevos Doctorados",
-        "nombreProyecto": "",
-        "nombreCuenta": "",
-        "descripcionServicio": "",
-        "inversionTotal": 101200
-      },
-      {
-        "id": "cc_5",
-        "agrupador": "Nuevas SSEE",
-        "nombreProyecto": "",
-        "nombreCuenta": "",
-        "descripcionServicio": "",
-        "inversionTotal": 278118
-      }
-    ],
-    "seq": 6
+    "centros": [],
+    "seq": 1
   },
   "planning_data": {
     "records": [

@@ -1713,6 +1713,7 @@
       <h2 id="modalTitle">Registrar nueva campaña</h2>
       <p id="formError" class="form-error hidden" role="alert"></p>
       <form id="campaignForm" class="campaign-form">
+        <div class="campaign-form-planning-full">
         <div class="row-3">
           <label>
             Tipo de programa
@@ -1784,14 +1785,7 @@
             Fecha fin
             <input id="endDate" name="endDate" type="date" required disabled>
           </label>
-          <label>
-            Centro de costo
-            <select id="centroCostoSelect" name="centroCosto">
-              <option value="">Sin centro de costo</option>
-            </select>
-          </label>
         </div>
-        <p id="centroCostoSaldoHint" class="hint cc-saldo-hint" role="status"></p>
 
         <div class="campaign-separator" aria-hidden="true"></div>
 
@@ -1842,6 +1836,17 @@
             </thead>
             <tbody id="previewBody"></tbody>
           </table>
+        </div>
+        </div>
+
+        <div class="campaign-form-cc-section">
+          <label for="centroCostoSelect">
+            Centro de costo
+            <select id="centroCostoSelect" name="centroCosto">
+              <option value="">Sin centro de costo</option>
+            </select>
+          </label>
+          <p id="centroCostoSaldoHint" class="hint cc-saldo-hint" role="status"></p>
         </div>
 
         <div class="modal-actions">
