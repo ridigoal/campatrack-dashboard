@@ -13927,3 +13927,61 @@ body.dark-mode .campatrack-toast--error {
   gap: 0.35rem;
 }
 
+/* Carga inicial post-login: placeholders hasta que llegue /api/data */
+@keyframes campatrack-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.campatrack-skeleton {
+  display: block;
+  border-radius: 6px;
+  min-height: 12px;
+  background: linear-gradient(
+    90deg,
+    #e8ecf4 0%,
+    #f1f4fb 40%,
+    #e8ecf4 80%
+  );
+  background-size: 200% 100%;
+  animation: campatrack-skeleton-shimmer 1.1s ease-in-out infinite;
+}
+
+body.dark-mode .campatrack-skeleton {
+  background: linear-gradient(
+    90deg,
+    #1e293b 0%,
+    #334155 45%,
+    #1e293b 85%
+  );
+  background-size: 200% 100%;
+}
+
+.campatrack-skeleton--kpi {
+  min-height: 74px;
+  width: 100%;
+}
+
+.campatrack-skeleton--bar {
+  height: 14px;
+  width: 100%;
+}
+
+.campatrack-skeleton--chart {
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+}
+
+.dashboard-module-loading .dash-busqueda-programa,
+.dashboard-module-loading .dash-month-select,
+.dashboard-module-loading .dash-date-input,
+.dashboard-module-loading .dash-export-btn {
+  pointer-events: none;
+  opacity: 0.55;
+}
+

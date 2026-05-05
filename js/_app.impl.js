@@ -6184,6 +6184,9 @@ const EXPORT_BUNDLE_KEYS = [
   "auditoria"
 ];
 
+/** True mientras se obtiene `/api/data` tras el login (shell visible, dashboards en skeleton). */
+let campatrackPostLoginHydrationBusy = false;
+
 /** Estado adicional que el dashboard hidrata / persiste fuera del JSON mínimo de export. */
 const CLAVES_EXTRA_ESTADO_SISTEMA = ["campaniasUnicasData", "medidas", "modeloAnalitico", "modelo"];
 
@@ -6587,7 +6590,6 @@ function parseBundleDataFromApiJson(json) {
     }
   }
   if (bundle == null || typeof bundle !== "object" || Array.isArray(bundle)) return null;
-  console.log("Bundle final:", bundle);
   return bundle;
 }
 
@@ -6607,7 +6609,6 @@ async function afterLoginSuccess(user) {
       console.warn("afterLoginSuccess: sin teamId ni username para partición");
       return null;
     }
-    console.log("Cargando data desde backend...");
     const res = await fetch(
       `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
     );
@@ -6616,7 +6617,6 @@ async function afterLoginSuccess(user) {
       return null;
     }
     const json = await res.json();
-    console.log("Respuesta backend:", json);
     const bundle = parseBundleDataFromApiJson(json);
     if (!bundle) {
       console.log("No hay data para este usuario");
@@ -6684,7 +6684,6 @@ async function cargarDataDesdeBackend(opts = {}) {
       }
       return;
     }
-    console.log("🔥 Cargando data desde backend...");
     const res = await fetch(
       `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
     );
@@ -6693,13 +6692,11 @@ async function cargarDataDesdeBackend(opts = {}) {
       return;
     }
     const json = await res.json();
-    console.log("Respuesta backend:", json);
     const bundle = parseBundleDataFromApiJson(json);
     if (!bundle) {
       console.log("No hay data para este usuario");
       return;
     }
-    console.log("Data aplicada al sistema");
     withDraftNotificationsSuppressed(() => {
       hydrateAppStateDraftFromApiBundle(bundle);
       try {
@@ -6737,6 +6734,166 @@ async function cargarDataDesdeBackend(opts = {}) {
   }
 }
 
+function campatrackYieldToPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(resolve);
+        else resolve();
+      });
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+function campatrackBundleTieneDatosUtiles(bundle) {
+  if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return false;
+  const claves = EXPORT_BUNDLE_KEYS.concat(CLAVES_EXTRA_ESTADO_SISTEMA);
+  for (const clave of claves) {
+    if (!Object.prototype.hasOwnProperty.call(bundle, clave)) continue;
+    const v = bundle[clave];
+    if (v == null) continue;
+    if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Vuelca el bundle en `appMemoryKV`, `hydratarDesdeLocalStorage` y pinta el dashboard.
+ * Con `deferSecondaryRenders` los módulos Data/Relaciones/Bitácora se repintan en idle.
+ */
+function campatrackApplyFetchedBundleToRuntime(bundlePayload, opts = {}) {
+  const deferSecondaryRenders = opts.deferSecondaryRenders === true;
+  if (
+    bundlePayload == null ||
+    typeof bundlePayload !== "object" ||
+    Array.isArray(bundlePayload)
+  ) {
+    return;
+  }
+  try {
+    appMemoryKV.clear();
+  } catch (_) {}
+  try {
+    const u = getUser();
+    if (u && String(u.username ?? "").trim()) {
+      appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
+      appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
+      appMemoryKV.setItem(LS_CAMPATRACK_USER, String(u.username));
+      appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
+    }
+  } catch (_) {}
+
+  for (const clave of EXPORT_BUNDLE_KEYS) {
+    if (clave === "campatrack_users_db" || clave === "auditoria") continue;
+    if (!Object.prototype.hasOwnProperty.call(bundlePayload, clave)) continue;
+    const v = bundlePayload[clave];
+    if (v == null || v === undefined) continue;
+    try {
+      appMemoryKV.setItem(clave, JSON.stringify(v));
+    } catch (err) {
+      console.warn("No se pudo guardar en almacén en memoria:", clave, err);
+    }
+  }
+  try {
+    syncDataOriginalFromPublishedDraft();
+  } catch (_) {}
+  try {
+    sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    hydratarDesdeLocalStorage();
+  } catch (e) {
+    console.warn("hydratarDesdeLocalStorage tras aplicar bundle API", e);
+  }
+  campatrackMergeSessionProfileFromDraftUsers();
+  if (typeof syncCampatrackProfileHeader === "function") syncCampatrackProfileHeader();
+  if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+  if (typeof setFechaActualData === "function") setFechaActualData();
+  if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
+
+  const renderDashboardAndAlerts = () => {
+    if (typeof renderDashboard === "function") renderDashboard();
+    if (typeof scheduleDashEndingSoonAlert === "function") scheduleDashEndingSoonAlert();
+  };
+
+  const secondaryRenders = () => {
+    if (typeof renderTablaData === "function") renderTablaData();
+    if (typeof renderRelacionesTabla === "function") renderRelacionesTabla();
+    if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
+    if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
+    if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
+    if (typeof renderBitacoraTable === "function") renderBitacoraTable();
+    if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+      try {
+        window.campatrackRefreshUsersListIfVisible();
+      } catch (_) {}
+    }
+    if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+      try {
+        globalThis.__campatrackRebuildAuditoriaAfterHydrate();
+      } catch (_) {}
+    }
+  };
+
+  if (deferSecondaryRenders) {
+    renderDashboardAndAlerts();
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => secondaryRenders(), { timeout: 2000 });
+    } else {
+      setTimeout(secondaryRenders, 120);
+    }
+  } else {
+    secondaryRenders();
+    renderDashboardAndAlerts();
+  }
+  resetPublishDraftAfterServerHydrate();
+}
+
+function campatrackCompletePostLoginPipeline(bundlePayload) {
+  if (bundlePayload == null) {
+    void showAppDialog({
+      message:
+        "No hay datos guardados en el servidor para este equipo. La sesión permanece activa; puedes trabajar con datos vacíos o publicar más adelante.",
+      primaryText: "Entendido",
+      showSecondary: false,
+      primaryDanger: false,
+    });
+    try {
+      sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
+    } catch (_) {}
+    clearDashboardSkeletonMode();
+    renderDashboardSinData();
+    resetPublishDraftAfterServerHydrate();
+    return;
+  }
+
+  if (!campatrackBundleTieneDatosUtiles(bundlePayload)) {
+    void showAppDialog({
+      message:
+        "La API devolvió datos sin claves reconocidas. La sesión sigue activa; revisa los datos del servidor.",
+      primaryText: "Entendido",
+      showSecondary: false,
+      primaryDanger: false,
+    });
+    try {
+      sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
+    } catch (_) {}
+    clearDashboardSkeletonMode();
+    if (typeof renderDashboard === "function") renderDashboard();
+    if (typeof scheduleDashEndingSoonAlert === "function") scheduleDashEndingSoonAlert();
+    resetPublishDraftAfterServerHydrate();
+    return;
+  }
+
+  campatrackApplyFetchedBundleToRuntime(bundlePayload, { deferSecondaryRenders: true });
+}
+
 /**
  * Obtiene `/api/data` del usuario logueado.
  * - `false` (defecto): devuelve JSON stringido para armar File (botón importar URL).
@@ -6746,20 +6903,6 @@ async function cargarDataDesdeBackend(opts = {}) {
 async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
   const recargarSiPostLogin = () => {
     if (aplicarYLuegoRecargar) window.location.reload();
-  };
-
-  const bundleTieneDatosUtiles = (bundle) => {
-    if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return false;
-    const claves = EXPORT_BUNDLE_KEYS.concat(CLAVES_EXTRA_ESTADO_SISTEMA);
-    for (const clave of claves) {
-      if (!Object.prototype.hasOwnProperty.call(bundle, clave)) continue;
-      const v = bundle[clave];
-      if (v == null) continue;
-      if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) continue;
-      if (Array.isArray(v) && v.length === 0) continue;
-      return true;
-    }
-    return false;
   };
 
   try {
@@ -6814,10 +6957,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
       return "";
     }
 
-    console.log("DATA API:", bundlePayload);
-
-    if (!bundleTieneDatosUtiles(bundlePayload)) {
-      console.log("Sin datos de bundle para aplicar para este usuario");
+    if (!campatrackBundleTieneDatosUtiles(bundlePayload)) {
       if (aplicarYLuegoRecargar) {
         void showAppDialog({
           message:
@@ -6834,66 +6974,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
 
     if (!aplicarYLuegoRecargar) return JSON.stringify(bundlePayload);
 
-    try {
-      appMemoryKV.clear();
-    } catch (_) {}
-    try {
-      const u = getUser();
-      if (u && String(u.username ?? "").trim()) {
-        appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
-        appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(u.role));
-        appMemoryKV.setItem(LS_CAMPATRACK_USER, String(u.username));
-        appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
-      }
-    } catch (_) {}
-
-    for (const clave of EXPORT_BUNDLE_KEYS) {
-      if (clave === "campatrack_users_db" || clave === "auditoria") continue;
-      if (!Object.prototype.hasOwnProperty.call(bundlePayload, clave)) continue;
-      const v = bundlePayload[clave];
-      if (v == null || v === undefined) continue;
-      try {
-        appMemoryKV.setItem(clave, JSON.stringify(v));
-      } catch (err) {
-        console.warn("No se pudo guardar en almacén en memoria:", clave, err);
-      }
-    }
-    try {
-      syncDataOriginalFromPublishedDraft();
-    } catch (_) {}
-    try {
-      sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
-    } catch (_) {
-      /* ignore */
-    }
-    try {
-      hydratarDesdeLocalStorage();
-    } catch (e) {
-      console.warn("hydratarDesdeLocalStorage tras aplicar bundle API", e);
-    }
-    campatrackMergeSessionProfileFromDraftUsers();
-    if (typeof syncCampatrackProfileHeader === "function") syncCampatrackProfileHeader();
-    if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
-    if (typeof renderTablaData === "function") renderTablaData();
-    if (typeof setFechaActualData === "function") setFechaActualData();
-    if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
-    if (typeof renderRelacionesTabla === "function") renderRelacionesTabla();
-    if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
-    if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
-    if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
-    if (typeof renderBitacoraTable === "function") renderBitacoraTable();
-    if (typeof renderDashboard === "function") renderDashboard();
-    if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
-      try {
-        window.campatrackRefreshUsersListIfVisible();
-      } catch (_) {}
-    }
-    if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
-      try {
-        globalThis.__campatrackRebuildAuditoriaAfterHydrate();
-      } catch (_) {}
-    }
-    resetPublishDraftAfterServerHydrate();
+    campatrackApplyFetchedBundleToRuntime(bundlePayload, { deferSecondaryRenders: false });
     return "";
   } catch (err) {
     console.error("Error cargando data API", err);
@@ -13055,6 +13136,56 @@ function renderDashboardDemographicGeoPanels() {
   renderDashboardInsightsSidePanels();
 }
 
+/** Placeholders de carga rápida tras login (antes de aplicar bundle del servidor). */
+function renderDashboardSkeleton() {
+  const root = document.getElementById("dashboardModule");
+  if (root) root.classList.add("dashboard-module-loading");
+  ensureDashboardInitialMonth();
+  fillDashboardIntakeSelect();
+  fillDashboardMesSelect();
+  renderDashboardTableFooter();
+  updateDashboardMetaGlobalVisibility();
+  const selMes = document.getElementById("dashFiltroMes");
+  if (selMes && estadoFiltrosDashboard.mes) selMes.value = estadoFiltrosDashboard.mes;
+  const selIntake = document.getElementById("dashFiltroIntake");
+  if (selIntake) selIntake.value = estadoFiltrosDashboard.intake || "";
+  const kpiEl = document.getElementById("dashboardKpis");
+  if (kpiEl) {
+    kpiEl.innerHTML = Array.from(
+      { length: 6 },
+      () =>
+        `<div class="dash-kpi-card dashboard-card campatrack-skeleton campatrack-skeleton--kpi" aria-hidden="true"></div>`
+    ).join("");
+  }
+  const tbody = document.getElementById("dashTbody");
+  if (tbody) {
+    const totalColumnas = mostrarMetaGlobal ? 47 : 23;
+    tbody.innerHTML = Array.from(
+      { length: 10 },
+      () =>
+        `<tr><td colspan="${totalColumnas}"><span class="campatrack-skeleton campatrack-skeleton--bar" aria-hidden="true"></span></td></tr>`
+    ).join("");
+  }
+  const svg = document.getElementById("dashboardChart");
+  if (svg) {
+    svg.innerHTML = `<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="currentColor" opacity="0.4" font-size="13">Cargando datos…</text>`;
+  }
+  const donutEl = document.getElementById("dashGastoPlatDonut");
+  if (donutEl) donutEl.innerHTML = "";
+  const legendEl = document.getElementById("dashGastoPlatLegend");
+  if (legendEl) legendEl.innerHTML = "";
+  const topCplEl = document.getElementById("dashTopCplList");
+  if (topCplEl) topCplEl.innerHTML = "";
+  const tl = document.getElementById("dashTotalLeads");
+  const tg = document.getElementById("dashTotalGasto");
+  if (tl) tl.innerHTML = "";
+  if (tg) tg.innerHTML = "";
+}
+
+function clearDashboardSkeletonMode() {
+  document.getElementById("dashboardModule")?.classList.remove("dashboard-module-loading");
+}
+
 function renderDashboardSinData() {
   const kpiEl = document.getElementById("dashboardKpis");
   renderDashboardTableFooter();
@@ -13116,6 +13247,7 @@ function renderDashboardKpisChartOnly() {
 }
 
 function renderDashboard() {
+  clearDashboardSkeletonMode();
   ensureDashboardInitialMonth();
   fillDashboardIntakeSelect();
   fillDashboardMesSelect();
@@ -13248,7 +13380,7 @@ function initDashboardModule() {
     dashChartRo.observe(dashChartResizeHost);
   }
 
-  renderDashboard();
+  /** El primer pintado del dashboard lo hace `initTabs` → `setActive` (sesión) o el flujo post-login. */
 }
 
 const LS_CAMPATRACK_AUTH = "auth";
@@ -15001,8 +15133,16 @@ function initCampatrackLogin() {
           : typeof getUser === "function"
             ? getUser()
             : null;
-      let preloadedBundle = null;
+      campatrackPostLoginHydrationBusy = true;
+      bootstrapCampatrackAuthShell();
       try {
+        if (appActivateMainModule && isCampatrackAuthenticated()) {
+          appActivateMainModule("dashboard");
+        }
+      } catch (_) {}
+      await campatrackYieldToPaint();
+      try {
+        let preloadedBundle = null;
         if (uOk) {
           try {
             preloadedBundle = await afterLoginSuccess(uOk);
@@ -15010,20 +15150,17 @@ function initCampatrackLogin() {
             console.error("Error cargando data:", e);
           }
         }
-        await cargarDataDesdeAPI(true, {
-          fetchedFromLogin: true,
-          preloadedBundle,
-        });
+        campatrackCompletePostLoginPipeline(preloadedBundle);
       } catch (e) {
         console.error("Error cargando data:", e);
+        try {
+          sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
+        } catch (_) {}
+        clearDashboardSkeletonMode();
+        if (typeof renderDashboardSinData === "function") renderDashboardSinData();
+      } finally {
+        campatrackPostLoginHydrationBusy = false;
       }
-      bootstrapCampatrackAuthShell();
-      try {
-        if (appActivateMainModule && isCampatrackAuthenticated()) {
-          appActivateMainModule("dashboard");
-        }
-      } catch (_) {}
-      resetPublishDraftAfterServerHydrate();
     };
     try {
       if (u === SYSTEM_ADMIN.usuario && p === SYSTEM_ADMIN.clave) {
@@ -15238,19 +15375,23 @@ function initTabs() {
       renderRelacionesEstado();
     }
     if (safeModule === "dashboard") {
-      renderDashboard();
-      scheduleDashEndingSoonAlert();
-      let skipRedundantBackendFetch = false;
-      try {
-        if (sessionStorage.getItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH) === "1") {
-          sessionStorage.removeItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH);
-          skipRedundantBackendFetch = true;
+      if (campatrackPostLoginHydrationBusy) {
+        renderDashboardSkeleton();
+      } else {
+        renderDashboard();
+        scheduleDashEndingSoonAlert();
+        let skipRedundantBackendFetch = false;
+        try {
+          if (sessionStorage.getItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH) === "1") {
+            sessionStorage.removeItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH);
+            skipRedundantBackendFetch = true;
+          }
+        } catch (_) {
+          /* ignore */
         }
-      } catch (_) {
-        /* ignore */
-      }
-      if (!skipRedundantBackendFetch) {
-        void cargarDataDesdeBackend();
+        if (!skipRedundantBackendFetch) {
+          void cargarDataDesdeBackend();
+        }
       }
     } else if (dashEndingSoonAlertTimer != null) {
       clearTimeout(dashEndingSoonAlertTimer);

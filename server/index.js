@@ -103,7 +103,7 @@ async function fetchLatestCampaignRowByPartitionKey(pool, partitionKey) {
     .request()
     .input("key", sql.VarChar(255), key)
     .query(
-      `SELECT TOP (1) *
+      `SELECT TOP (1) user_id, created_at, data
        FROM campaign_data
        WHERE user_id = @key
        ORDER BY created_at DESC`
@@ -120,7 +120,7 @@ async function fetchLatestCampaignRowLegacySameTeam(pool, canonicalTeamId) {
   if (!team || !CAMPATRACK_TEAM_ID_SET.has(team)) return null;
   try {
     const result = await pool.request().input("team", sql.VarChar(128), team).query(`
-      SELECT TOP (1) cd.*
+      SELECT TOP (1) cd.user_id, cd.created_at, cd.data
       FROM campaign_data AS cd
       INNER JOIN dbo.users AS u ON u.username = cd.user_id
       WHERE u.profile_json IS NOT NULL
@@ -256,7 +256,9 @@ function sendCampaignJsonFromRow(res, row) {
     return res.status(500).json({ error: "Formato de data inesperado" });
   }
 
-  console.log("DATA DEVUELTA:", data);
+  if (process.env.CAMPATRACK_DEBUG_API === "1") {
+    console.log("DATA DEVUELTA (trim):", typeof data === "object" ? Object.keys(data) : "");
+  }
   return res.json({ data });
 }
 
