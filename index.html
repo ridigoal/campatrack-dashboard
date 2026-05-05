@@ -79,11 +79,16 @@
                       </button>
                     </div>
                   </div>
-                  <div class="campatrack-login-row-meta">
-                    <label class="campatrack-login-check">
-                      <input type="checkbox" id="campatrackLoginRemember" name="remember" />
-                      <span>Recordarme</span>
-                    </label>
+                  <div class="campatrack-login-field">
+                    <label class="campatrack-login-label" for="campatrackLoginTeam">Equipo</label>
+                    <div class="campatrack-login-input-wrap">
+                      <span class="campatrack-login-input-ico" aria-hidden="true"><i class="fa-solid fa-users"></i></span>
+                      <select id="campatrackLoginTeam" name="team" required class="campatrack-login-input campatrack-login-select" aria-required="true">
+                        <option value="">— Equipo —</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="campatrack-login-row-meta campatrack-login-row-meta--end">
                     <a href="#" class="campatrack-login-link" id="campatrackLoginForgot">¿Olvidaste tu contraseña?</a>
                   </div>
                   <p id="campatrackLoginError" class="campatrack-login-error hidden" role="alert">Credenciales incorrectas</p>
@@ -118,16 +123,6 @@
       <div class="app-dialog-actions">
         <button type="button" id="appDialogPrimary" class="app-dialog-btn app-dialog-btn-primary"></button>
         <button type="button" id="appDialogSecondary" class="app-dialog-btn app-dialog-btn-secondary"></button>
-      </div>
-    </div>
-  </div>
-
-  <div id="campatrackLoginLoadingOverlay" class="campatrack-login-loading-overlay hidden" aria-hidden="true" role="alertdialog" aria-busy="true" aria-label="Cargando">
-    <div class="campatrack-login-loading-card">
-      <div class="campatrack-login-loading-spinner" aria-hidden="true"></div>
-      <p class="campatrack-login-loading-text">Cargando información…</p>
-      <div class="campatrack-login-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <span class="campatrack-login-loading-bar-fill"></span>
       </div>
     </div>
   </div>
@@ -190,12 +185,10 @@
       </button>
       <div class="app-profile-wrap" id="appProfileWrap">
         <div class="app-profile-row">
-          <button type="button" class="app-profile-avatar-btn" id="appProfileAvatarBtn" aria-label="Menú de usuario" aria-expanded="false" aria-controls="appProfileMenu" title="Menú de usuario">
-            <img id="appProfileAvatarImage" class="app-profile-avatar" src="assets/profile-richi.png" alt="" width="40" height="40" decoding="async" />
-          </button>
+          <button type="button" class="app-profile-avatar-btn" id="appProfileAvatarBtn" aria-label="Menú de usuario" aria-expanded="false" aria-controls="appProfileMenu" title="Menú de usuario"></button>
           <div class="app-profile-meta">
-            <span id="appProfileName" class="app-profile-name">Richito Gonzales</span>
-            <span id="appProfileRole" class="app-profile-role">Analista Digital</span>
+            <span id="appProfileName" class="app-profile-name">Usuario</span>
+            <span id="appProfileRole" class="app-profile-role"></span>
           </div>
         </div>
         <div id="appProfileMenu" class="app-profile-menu" role="menu" aria-hidden="true">
@@ -1446,10 +1439,11 @@
                     </div>
                     <p id="usersPhotoError" class="users-field-error hidden" role="alert"></p>
                     <div id="usersPhotoPreviewWrap" class="users-photo-preview-wrap hidden">
-                      <img id="usersPhotoPreview" class="users-photo-preview" src="" alt="" width="120" height="120" />
+                      <span id="usersPhotoPreviewLetter" class="users-photo-preview users-photo-preview--letter hidden" aria-hidden="true"></span>
+                      <img id="usersPhotoPreview" class="users-photo-preview users-photo-preview--img hidden" src="" alt="" width="120" height="120" />
                       <button type="button" id="usersPhotoClearBtn" class="btn-toolbar btn-small">Quitar foto</button>
                     </div>
-                    <p class="users-photo-hint users-photo-hint--info">Si no agregas una foto, se asignará un avatar por defecto.</p>
+                    <p class="users-photo-hint users-photo-hint--info">Sin foto se mostrará la inicial del nombre en el sistema (avatar tipo Google).</p>
                   </div>
                   <div class="users-field">
                     <label class="users-field-label" for="usersNombre">Nombre <span class="users-req">*</span></label>
@@ -1470,16 +1464,12 @@
                   </div>
                 </div>
                 <div class="users-form-col users-form-col--right">
-                  <div class="users-field">
-                    <label class="users-field-label" for="usersTeamSelect">Equipo <span class="users-req">*</span></label>
-                    <select id="usersTeamSelect" class="users-input" required aria-required="true"></select>
-                    <p class="users-field-hint">Elige un equipo existente o escribe abajo un nombre para crear uno nuevo.</p>
+                  <fieldset class="users-field users-teams-fieldset">
+                    <legend class="users-field-label">Equipos asignados <span class="users-req">*</span></legend>
+                    <p class="users-field-hint">Marca uno o más equipos. Sin equipos no se puede iniciar sesión.</p>
+                    <div id="usersTeamsChecks" class="users-teams-checks" role="group" aria-label="Equipos"></div>
                     <p id="usersTeamErr" class="users-field-error hidden" role="alert"></p>
-                  </div>
-                  <div class="users-field">
-                    <label class="users-field-label" for="usersTeamNew">Nuevo equipo (opcional)</label>
-                    <input id="usersTeamNew" class="users-input" type="text" autocomplete="off" placeholder="Ej.: Marketing Educación" />
-                  </div>
+                  </fieldset>
                   <div class="users-field">
                     <label class="users-field-label" for="usersUsuario">Usuario <span class="users-req">*</span></label>
                     <input id="usersUsuario" class="users-input" type="text" autocomplete="username" placeholder="Ingresa el nombre de usuario" />
@@ -1496,6 +1486,27 @@
                     <p class="users-field-hint users-clave-hint-new users-clave-hint-accent">Mínimo 8 caracteres.</p>
                     <p id="usersClaveErr" class="users-field-error hidden" role="alert"></p>
                   </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="users-surface-card users-surface-card--toolbar-perms full-width" aria-label="Permisos de exportación e importación">
+              <div class="users-toolbar-perms-inner">
+                <h2 class="users-modules-title"><i class="fa-solid fa-gears users-modules-title-ico" aria-hidden="true"></i> Datos del sistema (sidebar)</h2>
+                <p class="users-modules-lead">Controlan si el usuario puede exportar o importar el bundle desde la barra lateral, o reiniciar el sistema.</p>
+                <div class="users-toolbar-perms-grid" role="group" aria-label="Permisos de barra lateral">
+                  <label class="users-toolbar-perm-item">
+                    <input type="checkbox" id="usersPermExport" class="users-perm-checkbox" />
+                    <span>Exportar datos</span>
+                  </label>
+                  <label class="users-toolbar-perm-item">
+                    <input type="checkbox" id="usersPermImport" class="users-perm-checkbox" />
+                    <span>Importar datos</span>
+                  </label>
+                  <label class="users-toolbar-perm-item">
+                    <input type="checkbox" id="usersPermReset" class="users-perm-checkbox" />
+                    <span>Resetear sistema</span>
+                  </label>
                 </div>
               </div>
             </section>

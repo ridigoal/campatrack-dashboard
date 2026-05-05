@@ -353,9 +353,39 @@ const LS_PLANNING_DATA = "planning_data";
 const LS_CONSUMO_CAMPANA = "consumo_por_campaña";
 const LS_BITACORA_DATA = "bitacora_data";
 const LS_CATALOGOS_SISTEMA = "catalogos_sistema";
-/** Equipos (contenedor multiusuario). Datos legacy sin `teamId` se migran a `team_general`. */
+/** Lista de equipos en memoria (catálogo fijo también en `ensureCampatrackTeamsSeed`). */
 const LS_CAMPATRACK_TEAMS = "campatrack_teams_db";
-const TEAM_GENERAL_ID = "team_general";
+
+/** Equipos canónicos: no existe equipo «general»; aislamiento estricto por `user.teamId` en sesión. */
+const CAMPATRACK_TEAM_DEFINITIONS = [
+  { id: "team_maestrias", nombre: "Posgrado Maestrías" },
+  { id: "team_edex", nombre: "Posgrado EDEX" }
+];
+
+function campatrackCanonTeamDefinitions() {
+  return CAMPATRACK_TEAM_DEFINITIONS;
+}
+
+function campatrackGetCanonTeamIds() {
+  return CAMPATRACK_TEAM_DEFINITIONS.map((x) => x.id);
+}
+
+function campatrackIsCanonTeamId(id) {
+  return campatrackGetCanonTeamIds().includes(String(id || "").trim());
+}
+
+/** `teams[]` desde borrador usuario; migra desde `teamId` suelto si hace falta. */
+function campatrackNormalizeTeamsFromDraftRecord(rec) {
+  if (!rec || typeof rec !== "object") return [];
+  let list = [];
+  if (Array.isArray(rec.teams)) {
+    list = rec.teams.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+  list = [...new Set(list)].filter(campatrackIsCanonTeamId);
+  const legacy = rec.teamId != null ? String(rec.teamId).trim() : "";
+  if (!list.length && legacy && campatrackIsCanonTeamId(legacy)) list = [legacy];
+  return list;
+}
 
 /** Copia completa en memoria de planning (todos los equipos) para merge al persistir y borradores. */
 let planningMergedRecordsCache = null;
@@ -396,22 +426,16 @@ function saveCampatrackStoredTeams(list) {
   }
 }
 
-function newCampatrackTeamId() {
-  return `team_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
 function ensureCampatrackTeamsSeed() {
-  let list = getCampatrackStoredTeams();
-  if (!list.length) {
-    list = [{ id: TEAM_GENERAL_ID, nombre: "General" }];
-    saveCampatrackStoredTeams(list);
-    return list;
+  const snap = JSON.stringify(CAMPATRACK_TEAM_DEFINITIONS);
+  try {
+    if (JSON.stringify(getCampatrackStoredTeams()) !== snap) {
+      saveCampatrackStoredTeams(JSON.parse(JSON.stringify(CAMPATRACK_TEAM_DEFINITIONS)));
+    }
+  } catch (_) {
+    saveCampatrackStoredTeams(JSON.parse(JSON.stringify(CAMPATRACK_TEAM_DEFINITIONS)));
   }
-  if (!list.some((t) => String(t?.id) === TEAM_GENERAL_ID)) {
-    list.unshift({ id: TEAM_GENERAL_ID, nombre: "General" });
-    saveCampatrackStoredTeams(list);
-  }
-  return list;
+  return getCampatrackStoredTeams();
 }
 
 function resolveCampatrackTeamNombre(teamId) {
@@ -422,52 +446,67 @@ function resolveCampatrackTeamNombre(teamId) {
 }
 
 /**
- * Normaliza id de equipo: acepta el `id` canónico (p. ej. team_general), el nombre en UI ("General") o alias.
- * Evita que el filtro por equipo compare "General" con filas guardadas como `team_general`.
+ * Normaliza id de equipo canónico o etiqueta desde el catálogo.
+ * IDs desconocidos se devuelven tal cual (datos huérfanos no cruzan con sesión válida).
  */
 function resolveCampatrackTeamId(raw) {
   const s = String(raw ?? "").trim();
-  if (!s) return TEAM_GENERAL_ID;
+  if (!s) return "";
   ensureCampatrackTeamsSeed();
   const list = getCampatrackStoredTeams();
   if (list.some((t) => String(t?.id) === s)) return s;
   const byNombre = list.find((t) => String(t?.nombre || "").trim().toLowerCase() === s.toLowerCase());
   if (byNombre) return String(byNombre.id);
-  const sl = s.toLowerCase().replace(/\s+/g, "_");
-  if (sl === "general") return TEAM_GENERAL_ID;
-  return s;
+  return campatrackIsCanonTeamId(s) ? s : s;
 }
 
 /**
- * Equipo activo = sesión (`user.teamId`) o equipo general (legacy / sin sesión).
- * `getUser` está declarado más abajo; las funciones declaradas quedan disponibles en todo el módulo.
+ * Equipo activo = sesión (`user.teamId` elegido en login). Sin sesión válida cadena vacía.
  */
 function getCurrentTeamId() {
   try {
     const u = getUser();
-    if (u && u.campatrackSystemRoot === true) return TEAM_GENERAL_ID;
     const tid = u && u.teamId != null ? String(u.teamId).trim() : "";
-    if (tid) return resolveCampatrackTeamId(tid);
+    if (tid) return resolveCampatrackTeamId(tid) || tid;
   } catch (_) {
     /* ignore */
   }
-  return TEAM_GENERAL_ID;
+  return "";
 }
 
 function normalizeRowTeamId(row) {
   const v = row && row.teamId != null ? String(row.teamId).trim() : "";
-  if (!v) return TEAM_GENERAL_ID;
-  return resolveCampatrackTeamId(v);
+  if (!v) return "";
+  const r = resolveCampatrackTeamId(v);
+  return r || v;
 }
 
 function rowBelongsToCurrentTeam(row) {
-  try {
-    const u = getUser();
-    if (u && u.campatrackSystemRoot === true) return true;
-  } catch (_) {
-    /* ignore */
+  const ct = String(getCurrentTeamId()).trim();
+  if (!ct) return false;
+  const rt = String(normalizeRowTeamId(row)).trim();
+  if (!rt) return false;
+  return rt === ct;
+}
+
+/** Misma partición que `campaign_data.user_id` en API: `teamId` canónico; si falta, username (legado). */
+function campatrackCampaignDataPartitionKeyFromUserLike(userLike) {
+  const u =
+    userLike != null && typeof userLike === "object"
+      ? userLike
+      : typeof getUser === "function"
+        ? getUser()
+        : null;
+  if (!u || typeof u !== "object") return "";
+  const tidRaw = String(u.teamId ?? "").trim();
+  if (tidRaw) {
+    const canon =
+      typeof resolveCampatrackTeamId === "function"
+        ? resolveCampatrackTeamId(tidRaw)
+        : "";
+    return canon || tidRaw;
   }
-  return String(normalizeRowTeamId(row)) === String(getCurrentTeamId());
+  return String(u.username ?? "").trim();
 }
 
 function mergeRowsByTeamId(fullBase, memoryRows, teamId, getTeamIdFromRow) {
@@ -502,8 +541,9 @@ function migratePlanningRowsTeamIds(allRows) {
   for (const r of allRows) {
     if (!r || typeof r !== "object") continue;
     const raw = r.teamId == null ? "" : String(r.teamId).trim();
-    const next = raw ? resolveCampatrackTeamId(raw) : TEAM_GENERAL_ID;
-    if (!raw || String(r.teamId).trim() !== next) {
+    if (!raw) continue;
+    const next = resolveCampatrackTeamId(raw) || raw;
+    if (String(r.teamId).trim() !== next) {
       r.teamId = next;
       changed = true;
     }
@@ -516,8 +556,9 @@ function migrateMissingTeamIdOnRows(arr) {
   for (const r of arr || []) {
     if (!r || typeof r !== "object") continue;
     const raw = r.teamId == null ? "" : String(r.teamId).trim();
-    const next = raw ? resolveCampatrackTeamId(raw) : TEAM_GENERAL_ID;
-    if (!raw || String(r.teamId).trim() !== next) {
+    if (!raw) continue;
+    const next = resolveCampatrackTeamId(raw) || raw;
+    if (String(r.teamId).trim() !== next) {
       r.teamId = next;
       changed = true;
     }
@@ -754,13 +795,16 @@ function hydratarCentrosCostos() {
 }
 
 function normalizeCentroCostoRow(r) {
+  const tidRaw = r?.teamId != null ? String(r.teamId).trim() : "";
+  const teamId = tidRaw ? resolveCampatrackTeamId(tidRaw) || tidRaw : "";
   return {
     id: String(r.id),
     agrupador: String(r.agrupador ?? ""),
     nombreProyecto: String(r.nombreProyecto ?? ""),
     nombreCuenta: String(r.nombreCuenta ?? ""),
     descripcionServicio: String(r.descripcionServicio ?? ""),
-    inversionTotal: Math.max(0, Number(r.inversionTotal) || 0)
+    inversionTotal: Math.max(0, Number(r.inversionTotal) || 0),
+    teamId
   };
 }
 
@@ -1171,6 +1215,7 @@ function renderCentroCostosMainTable() {
   let totalSaldo = 0;
 
   tbody.innerHTML = centrosCostos
+    .filter((cc) => rowBelongsToCurrentTeam(cc))
     .map((cc) => {
       const used = getUsedInversionCentro(cc.id, null);
       const inversionTotal = Number(cc.inversionTotal) || 0;
@@ -1299,6 +1344,7 @@ function populateCentroCostoSelect() {
   const cur = normalizeCentroCostoSelectionValue(sel.value);
   const seen = new Set();
   const options = centrosCostos
+    .filter((c) => rowBelongsToCurrentTeam(c))
     .map((c) => {
       const agrupador = getCentroCostoKey(c);
       if (!agrupador || seen.has(agrupador)) return "";
@@ -1346,15 +1392,20 @@ function initCentroCostosModule() {
   selCc?.addEventListener("change", () => updateCentroCostoSaldoHint());
 
   addBtn?.addEventListener("click", () => {
+    const tid = String(getCurrentTeamId()).trim();
+    if (!tid) return;
     const id = `cc_${centroCostoIdSeq++}`;
-    centrosCostos.push({
-      id,
-      agrupador: "",
-      nombreProyecto: "",
-      nombreCuenta: "",
-      descripcionServicio: "",
-      inversionTotal: 0
-    });
+    centrosCostos.push(
+      normalizeCentroCostoRow({
+        id,
+        agrupador: "",
+        nombreProyecto: "",
+        nombreCuenta: "",
+        descripcionServicio: "",
+        inversionTotal: 0,
+        teamId: tid
+      })
+    );
     persistCentrosCostos();
     refreshCentroCostosUI();
   });
@@ -1597,8 +1648,8 @@ function registrarAuditoria(evento) {
   try {
     const user = typeof getUser === "function" ? getUser() : null;
     if (!user || !String(user.username || "").trim()) return;
-    const teamIdRaw = user.teamId != null ? String(user.teamId).trim() : "";
-    const teamId = teamIdRaw || TEAM_GENERAL_ID;
+    const teamId = user.teamId != null ? String(user.teamId).trim() : "";
+    if (!teamId) return;
     const row = {
       id: generarAuditoriaId(),
       fecha: new Date().toISOString(),
@@ -1729,6 +1780,15 @@ function captureAppPublishBaseline() {
   }
 }
 
+/** Tras cargar data desde el servidor (login o GET): estado = publicado, contador 0, sin “cambios fantasma”. */
+function resetPublishDraftAfterServerHydrate() {
+  cancelPendingDraftNotify();
+  captureAppPublishBaseline();
+  appPendingPublishCount = 0;
+  resetAppStatePendingChanges();
+  updatePublishDraftToolbar();
+}
+
 function applyMemorySnapshotFromBundle(snap) {
   if (!snap || typeof snap !== "object") return;
   if (snap.planning_data && Array.isArray(snap.planning_data.records)) {
@@ -1751,7 +1811,7 @@ function applyMemorySnapshotFromBundle(snap) {
   }
   if (snap.cc_data && Array.isArray(snap.cc_data.centros)) {
     centrosCostos.length = 0;
-    snap.cc_data.centros.forEach((r) => centrosCostos.push(r));
+    snap.cc_data.centros.forEach((r) => centrosCostos.push(normalizeCentroCostoRow(r)));
     if (Number.isFinite(Number(snap.cc_data.seq)))
       centroCostoIdSeq = Math.max(1, Math.round(Number(snap.cc_data.seq)));
   }
@@ -3969,20 +4029,6 @@ function showCampatrackToast(message, variant = "success") {
   }, 4200);
 }
 
-function showCampatrackLoginLoading() {
-  const el = document.getElementById("campatrackLoginLoadingOverlay");
-  if (!el) return;
-  el.classList.remove("hidden");
-  el.setAttribute("aria-hidden", "false");
-}
-
-function hideCampatrackLoginLoading() {
-  const el = document.getElementById("campatrackLoginLoadingOverlay");
-  if (!el) return;
-  el.classList.add("hidden");
-  el.setAttribute("aria-hidden", "true");
-}
-
 /**
  * Diálogo reutilizable (sin alert ni confirm).
  * Resuelve true si el usuario pulsa el botón primario, false en secundario, overlay o Escape.
@@ -4925,7 +4971,8 @@ function createBitacoraRow() {
     observaciones: "",
     titulo: "",
     impacto: "",
-    importante: false
+    importante: false,
+    teamId: String(getCurrentTeamId() || "").trim()
   });
 }
 
@@ -4945,6 +4992,8 @@ function normalizeBitacoraRow(row) {
     String(impFlag || "")
       .toLowerCase()
       .trim() === "true";
+  const tidRaw = row?.teamId != null ? String(row.teamId).trim() : "";
+  const teamId = tidRaw ? resolveCampatrackTeamId(tidRaw) || tidRaw : "";
   return {
     id: safeId,
     fecha: String(row?.fecha || ""),
@@ -4954,7 +5003,8 @@ function normalizeBitacoraRow(row) {
     observaciones: String(row?.observaciones || ""),
     titulo: String(row?.titulo || "").trim(),
     impacto: impactoOk,
-    importante: Boolean(importante)
+    importante: Boolean(importante),
+    teamId
   };
 }
 
@@ -5053,6 +5103,14 @@ function getBitacoraTipoOptions() {
 }
 
 function bitacoraRowPasaFiltros(row) {
+  const ct = String(getCurrentTeamId()).trim();
+  if (!ct) return false;
+  const rt = row?.teamId != null ? String(row.teamId).trim() : "";
+  if (!rt) return false;
+  if (
+    String(resolveCampatrackTeamId(rt) || rt) !== String(resolveCampatrackTeamId(ct) || ct)
+  )
+    return false;
   if (bitacoraFiltros.tipo && String(row?.tipo || "") !== bitacoraFiltros.tipo) return false;
   const qProg = String(bitacoraFiltros.programa || "").trim().toLowerCase();
   if (qProg && !String(row?.programa || "").toLowerCase().includes(qProg)) return false;
@@ -5272,6 +5330,11 @@ function fillBitacoraEntryFormFromRow(rowId) {
 
 function guardarBitacoraDesdeFormulario() {
   if (!(bitacoraFormFecha instanceof HTMLInputElement)) return;
+  const sessTeam = String(getCurrentTeamId()).trim();
+  if (!sessTeam) {
+    void showAppDialog({ message: "No hay equipo de sesión. Inicia sesión de nuevo.", primaryText: "Entendido", showSecondary: false });
+    return;
+  }
   const fecha = String(bitacoraFormFecha.value || "").trim();
   const programa = bitacoraFormPrograma instanceof HTMLSelectElement ? String(bitacoraFormPrograma.value || "").trim() : "";
   const tipo = bitacoraFormTipo instanceof HTMLSelectElement ? String(bitacoraFormTipo.value || "").trim() : "";
@@ -5300,14 +5363,21 @@ function guardarBitacoraDesdeFormulario() {
     observaciones: "",
     titulo,
     impacto,
-    importante
+    importante,
+    teamId: sessTeam
   });
   if (bitacoraEditingId) {
     const idx = findBitacoraRowIndex(bitacoraEditingId);
     if (idx >= 0) {
       const prev = bitacoraData[idx];
       const mergedTitulo = String(prev.titulo || "").trim() || titulo;
-      bitacoraData[idx] = normalizeBitacoraRow({ ...prev, ...payload, id: prev.id, titulo: mergedTitulo });
+      bitacoraData[idx] = normalizeBitacoraRow({
+        ...prev,
+        ...payload,
+        id: prev.id,
+        titulo: mergedTitulo,
+        teamId: sessTeam
+      });
     }
   } else {
     bitacoraData.unshift(payload);
@@ -5900,6 +5970,16 @@ function cargarDesdeLocalStorage(clave) {
 }
 
 function resetearSistemaCompleto() {
+  const u = typeof getUser === "function" ? getUser() : null;
+  if (!resolveCampatrackSessionPermissions(u || {}).canReset) {
+    void showAppDialog({
+      message: "No tienes permiso para reiniciar el sistema desde la configuración lateral.",
+      primaryText: "Entendido",
+      showSecondary: false,
+      primaryDanger: false
+    });
+    return;
+  }
   showResetSystemKeyDialog().then((ok) => {
     if (!ok) return;
     try {
@@ -6220,11 +6300,17 @@ async function guardarDataEnAPI(dataCompletaReal) {
       return;
     }
 
+    const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
+    if (!partitionKey) {
+      console.error("No hay clave de partición para guardar campaña");
+      return;
+    }
+
     const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/save-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_id: user.username,
+        user_id: partitionKey,
         data: dataCompletaReal
       })
     });
@@ -6233,7 +6319,7 @@ async function guardarDataEnAPI(dataCompletaReal) {
 
     syncDataOriginalFromPublishedDraft();
     applyPlanningOriginalFromDraft();
-    console.log("Data guardada correctamente para:", user.username);
+    console.log("Data guardada correctamente para partición:", partitionKey);
   } catch (_err) {
     console.error("Error guardando data en API");
   }
@@ -6272,6 +6358,10 @@ function applyJsonBundleToLocalDraftOnly(bundle, opts = {}) {
     try {
       globalThis.__campatrackRebuildAuditoriaAfterHydrate();
     } catch (_) {}
+  }
+  if (typeof isCampatrackAuthenticated === "function" && isCampatrackAuthenticated()) {
+    campatrackMergeSessionProfileFromDraftUsers();
+    if (typeof syncCampatrackProfileHeader === "function") syncCampatrackProfileHeader();
   }
   registerUnpublishedDraftMutation();
   if (typeof updatePublishDraftToolbar === "function") updatePublishDraftToolbar();
@@ -6316,6 +6406,15 @@ async function exportarDatosSistema() {
   };
   try {
     const user = typeof getUser === "function" ? getUser() : null;
+    if (!resolveCampatrackSessionPermissions(user || {}).canExport) {
+      void showAppDialog({
+        message: "No tienes permiso para exportar datos.",
+        primaryText: "Entendido",
+        showSecondary: false,
+        primaryDanger: false
+      });
+      return;
+    }
     const uname = String(user?.username ?? "").trim();
     if (!uname) {
       void showAppDialog({
@@ -6326,9 +6425,19 @@ async function exportarDatosSistema() {
       });
       return;
     }
+    const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
+    if (!partitionKey) {
+      void showAppDialog({
+        message: "No hay equipo o usuario válido para exportar desde el servidor.",
+        primaryText: "Entendido",
+        showSecondary: false,
+        primaryDanger: false
+      });
+      return;
+    }
     setBusy(true);
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(uname)}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -6370,6 +6479,15 @@ function importarDatosSistemaDesdeArchivo(file) {
   void (async () => {
     try {
       const user = typeof getUser === "function" ? getUser() : null;
+      if (!resolveCampatrackSessionPermissions(user || {}).canImport) {
+        void showAppDialog({
+          message: "No tienes permiso para importar datos desde la configuración lateral.",
+          primaryText: "Entendido",
+          showSecondary: false,
+          primaryDanger: false
+        });
+        return;
+      }
       if (!user?.username) {
         void showAppDialog({
           message: "Inicia sesión para importar datos.",
@@ -6474,7 +6592,7 @@ function parseBundleDataFromApiJson(json) {
 }
 
 /**
- * Tras login exitoso: siempre consulta el backend (GET /api/data) con el usuario recibido.
+ * Tras login exitoso: siempre consulta el backend (GET /api/data) con la partición del equipo.
  * No depende de getUser ni de localStorage; debe llamarse con el mismo objeto persistido en sesión.
  */
 async function afterLoginSuccess(user) {
@@ -6484,9 +6602,14 @@ async function afterLoginSuccess(user) {
       console.warn("afterLoginSuccess: sin username");
       return null;
     }
+    const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
+    if (!partitionKey) {
+      console.warn("afterLoginSuccess: sin teamId ni username para partición");
+      return null;
+    }
     console.log("Cargando data desde backend...");
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(uname)}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
     );
     if (!res.ok) {
       console.error("Error cargando data:", `HTTP ${res.status}`);
@@ -6499,13 +6622,17 @@ async function afterLoginSuccess(user) {
       console.log("No hay data para este usuario");
       return null;
     }
-    hydrateAppStateDraftFromApiBundle(bundle);
-    try {
-      syncRelacionesViewFromDraft();
-      syncDataRelacionesModeloConsistency();
-    } catch (e) {
-      console.warn("Post-hydrate (login): modelo / relaciones", e);
-    }
+    withDraftNotificationsSuppressed(() => {
+      hydrateAppStateDraftFromApiBundle(bundle);
+      try {
+        syncRelacionesViewFromDraft();
+        syncDataRelacionesModeloConsistency();
+      } catch (e) {
+        console.warn("Post-hydrate (login): modelo / relaciones", e);
+      }
+    });
+    resetPublishDraftAfterServerHydrate();
+    campatrackMergeSessionProfileFromDraftUsers();
     return bundle;
   } catch (err) {
     console.error("Error cargando data:", err);
@@ -6519,7 +6646,7 @@ async function cargarDataUsuario(user) {
 }
 
 /**
- * Cada vez que se muestra el dashboard: GET /api/data con el usuario en sesión (sin depender del flujo de login).
+ * Cada vez que se muestra el dashboard: GET /api/data con la partición de equipo en sesión.
  */
 async function cargarDataDesdeBackend(opts = {}) {
   const force = opts && opts.force === true;
@@ -6527,6 +6654,11 @@ async function cargarDataDesdeBackend(opts = {}) {
     const user = getUser();
     if (!user || !user.username) {
       console.warn("Usuario no definido");
+      return;
+    }
+    const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
+    if (!partitionKey) {
+      console.warn("Sin clave de partición para cargar campaña");
       return;
     }
     if (appPendingPublishCount > 0 && !force) {
@@ -6554,7 +6686,7 @@ async function cargarDataDesdeBackend(opts = {}) {
     }
     console.log("🔥 Cargando data desde backend...");
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?user_id=${encodeURIComponent(String(user.username))}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
     );
     if (!res.ok) {
       console.error("Error cargando data:", `HTTP ${res.status}`);
@@ -6568,13 +6700,17 @@ async function cargarDataDesdeBackend(opts = {}) {
       return;
     }
     console.log("Data aplicada al sistema");
-    hydrateAppStateDraftFromApiBundle(bundle);
-    try {
-      syncRelacionesViewFromDraft();
-      syncDataRelacionesModeloConsistency();
-    } catch (e) {
-      console.warn("Post-hydrate (backend): modelo / relaciones", e);
-    }
+    withDraftNotificationsSuppressed(() => {
+      hydrateAppStateDraftFromApiBundle(bundle);
+      try {
+        syncRelacionesViewFromDraft();
+        syncDataRelacionesModeloConsistency();
+      } catch (e) {
+        console.warn("Post-hydrate (backend): modelo / relaciones", e);
+      }
+    });
+    campatrackMergeSessionProfileFromDraftUsers();
+    if (typeof syncCampatrackProfileHeader === "function") syncCampatrackProfileHeader();
     if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
     if (typeof renderTablaData === "function") renderTablaData();
     if (typeof setFechaActualData === "function") setFechaActualData();
@@ -6595,6 +6731,7 @@ async function cargarDataDesdeBackend(opts = {}) {
         globalThis.__campatrackRebuildAuditoriaAfterHydrate();
       } catch (_) {}
     }
+    resetPublishDraftAfterServerHydrate();
   } catch (err) {
     console.error("Error cargando data:", err);
   }
@@ -6604,7 +6741,7 @@ async function cargarDataDesdeBackend(opts = {}) {
  * Obtiene `/api/data` del usuario logueado.
  * - `false` (defecto): devuelve JSON stringido para armar File (botón importar URL).
  * - `true`: aplica las mismas claves que la importación manual (`EXPORT_BUNDLE_KEYS`),
- *   ejecuta POST de sincronización y recarga para hidratar (post-login).
+ *   vuelca el bundle en memoria y refresca vistas (post-login / sincronizar desde API).
  */
 async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
   const recargarSiPostLogin = () => {
@@ -6632,16 +6769,7 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     } catch (_) {
       userRaw = null;
     }
-    let user = userRaw ? JSON.parse(userRaw) : null;
-    if ((!user || !user.username) && aplicarYLuegoRecargar) {
-      restaurarCampatrackSessionDesdeBrowserStorage();
-      try {
-        userRaw = appMemorySession.getItem(SS_USER_SESSION_JSON);
-      } catch (_) {
-        userRaw = null;
-      }
-      user = userRaw ? JSON.parse(userRaw) : null;
-    }
+    const user = userRaw ? JSON.parse(userRaw) : null;
 
     if (!user || !user.username) {
       if (!aplicarYLuegoRecargar) {
@@ -6652,13 +6780,27 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
       return "";
     }
 
+    if (
+      aplicarYLuegoRecargar === true &&
+      opts.fetchedFromLogin !== true &&
+      !resolveCampatrackSessionPermissions(user).canImport
+    ) {
+      void showAppDialog({
+        message:
+          "No tienes permiso para sincronizar y aplicar datos desde la API. Si necesitas el acceso, un administrador puede habilitarlo en el módulo Usuarios.",
+        primaryText: "Entendido",
+        showSecondary: false,
+        primaryDanger: false
+      });
+      return "";
+    }
+
     const bundlePayload =
       opts.fetchedFromLogin === true ? opts.preloadedBundle : await cargarDataUsuario(user);
 
     if (bundlePayload == null) {
       console.log("Sin data para este usuario");
       if (aplicarYLuegoRecargar) {
-        persistCampatrackSessionToBrowserStorage();
         void showAppDialog({
           message:
             "No hay datos guardados en el servidor para este usuario. La sesión permanece activa; puedes trabajar con datos vacíos o publicar más adelante.",
@@ -6677,7 +6819,6 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     if (!bundleTieneDatosUtiles(bundlePayload)) {
       console.log("Sin datos de bundle para aplicar para este usuario");
       if (aplicarYLuegoRecargar) {
-        persistCampatrackSessionToBrowserStorage();
         void showAppDialog({
           message:
             "La API devolvió datos sin claves reconocidas. No se recargará la página; tu sesión sigue activa.",
@@ -6720,13 +6861,43 @@ async function cargarDataDesdeAPI(aplicarYLuegoRecargar = false, opts = {}) {
     try {
       syncDataOriginalFromPublishedDraft();
     } catch (_) {}
-    persistCampatrackSessionToBrowserStorage();
-    window.location.reload();
+    try {
+      sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      hydratarDesdeLocalStorage();
+    } catch (e) {
+      console.warn("hydratarDesdeLocalStorage tras aplicar bundle API", e);
+    }
+    campatrackMergeSessionProfileFromDraftUsers();
+    if (typeof syncCampatrackProfileHeader === "function") syncCampatrackProfileHeader();
+    if (typeof rebuildPlanningTable === "function") rebuildPlanningTable();
+    if (typeof renderTablaData === "function") renderTablaData();
+    if (typeof setFechaActualData === "function") setFechaActualData();
+    if (typeof mostrarFechaActualizacion === "function") mostrarFechaActualizacion();
+    if (typeof renderRelacionesTabla === "function") renderRelacionesTabla();
+    if (typeof renderRelacionesPlanningList === "function") renderRelacionesPlanningList();
+    if (typeof renderRelacionesDataList === "function") renderRelacionesDataList();
+    if (typeof renderRelacionesEstado === "function") renderRelacionesEstado();
+    if (typeof renderBitacoraTable === "function") renderBitacoraTable();
+    if (typeof renderDashboard === "function") renderDashboard();
+    if (typeof window.campatrackRefreshUsersListIfVisible === "function") {
+      try {
+        window.campatrackRefreshUsersListIfVisible();
+      } catch (_) {}
+    }
+    if (typeof globalThis.__campatrackRebuildAuditoriaAfterHydrate === "function") {
+      try {
+        globalThis.__campatrackRebuildAuditoriaAfterHydrate();
+      } catch (_) {}
+    }
+    resetPublishDraftAfterServerHydrate();
     return "";
   } catch (err) {
     console.error("Error cargando data API", err);
     if (aplicarYLuegoRecargar) {
-      persistCampatrackSessionToBrowserStorage();
       void showAppDialog({
         message: String(err?.message || "No se pudo cargar la data desde la API. La sesión permanece activa."),
         primaryText: "Entendido",
@@ -6759,6 +6930,22 @@ function bindCampatrackSidebarFooterDelegationOnce() {
     }
     if (id === "resetSystemBtn") {
       void resetearSistemaCompleto();
+      return;
+    }
+    if (id === "btn-importar-url") {
+      void (async () => {
+        try {
+          await cargarDataDesdeAPI(true);
+        } catch (err) {
+          console.error("Error cargando data desde API", err);
+          void showAppDialog({
+            message: "No se pudo cargar la data desde la API.",
+            primaryText: "Entendido",
+            showSecondary: false,
+            primaryDanger: false
+          });
+        }
+      })();
     }
   });
 }
@@ -6781,13 +6968,21 @@ function mountCampatrackSidebarFooterTools() {
     box.appendChild(b);
   }
   if (perms.canImport) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.id = "importDataBtn";
-    b.className = "tab campatrack-side-tool-btn";
-    b.innerHTML =
+    const bf = document.createElement("button");
+    bf.type = "button";
+    bf.id = "importDataBtn";
+    bf.className = "tab campatrack-side-tool-btn";
+    bf.innerHTML =
       '<i class="fa-solid fa-file-import campatrack-side-ico" aria-hidden="true"></i><span>Importar datos</span>';
-    box.appendChild(b);
+    box.appendChild(bf);
+    const bu = document.createElement("button");
+    bu.type = "button";
+    bu.id = "btn-importar-url";
+    bu.className = "tab campatrack-side-tool-btn btn-importar-url";
+    bu.title = "Obtiene el bundle desde el servidor y aplica los datos en esta sesión";
+    bu.innerHTML =
+      '<i class="fa-solid fa-cloud-arrow-down campatrack-side-ico" aria-hidden="true"></i><span>Sincronizar desde API</span>';
+    box.appendChild(bu);
   }
   if (perms.canReset) {
     const b = document.createElement("button");
@@ -6804,26 +6999,12 @@ function initExportImportDatos() {
   bindCampatrackSidebarFooterDelegationOnce();
   mountCampatrackSidebarFooterTools();
   const fileInput = document.getElementById("importDataFileInput");
-  const importUrlBtn = document.getElementById("btn-importar-url");
   fileInput?.addEventListener("change", (e) => {
     const input = e.target;
     const f = input?.files?.[0];
     if (input) input.value = "";
     if (!f) return;
     importarDatosSistemaDesdeArchivo(f);
-  });
-  importUrlBtn?.addEventListener("click", async () => {
-    try {
-      await cargarDataDesdeAPI(true);
-    } catch (err) {
-      console.error("Error cargando data desde API", err);
-      void showAppDialog({
-        message: "No se pudo cargar la data desde la API.",
-        primaryText: "Entendido",
-        showSecondary: false,
-        primaryDanger: false
-      });
-    }
   });
 }
 
@@ -6962,8 +7143,11 @@ function dataAnunciosUpsertKey(r) {
 function mergeDataAnuncioPreservingId(existing, incoming) {
   const id = existing._id;
   const { fecha: _omitFecha, ...prev } = existing || {};
-  const teamKeep = normalizeRowTeamId(incoming) !== TEAM_GENERAL_ID ? normalizeRowTeamId(incoming) : normalizeRowTeamId(existing);
-  return { ...prev, ...incoming, _id: id, teamId: teamKeep || getCurrentTeamId() };
+  const inc = normalizeRowTeamId(incoming);
+  const exc = normalizeRowTeamId(existing);
+  const ct = String(getCurrentTeamId()).trim();
+  const teamKeep = inc || exc || ct;
+  return { ...prev, ...incoming, _id: id, teamId: teamKeep || ct };
 }
 
 /**
@@ -7624,8 +7808,11 @@ function dataUpsertKeyGeneral(r) {
 
 function mergeDataRowPreservingId(existing, incoming) {
   const id = existing._id;
-  const teamKeep = normalizeRowTeamId(incoming) !== TEAM_GENERAL_ID ? normalizeRowTeamId(incoming) : normalizeRowTeamId(existing);
-  return { ...existing, ...incoming, _id: id, teamId: teamKeep || getCurrentTeamId() };
+  const inc = normalizeRowTeamId(incoming);
+  const exc = normalizeRowTeamId(existing);
+  const ct = String(getCurrentTeamId()).trim();
+  const teamKeep = inc || exc || ct;
+  return { ...existing, ...incoming, _id: id, teamId: teamKeep || ct };
 }
 
 /**
@@ -13087,24 +13274,55 @@ function saveCampatrackStoredUsers(list) {
   registerUnpublishedDraftMutation();
 }
 
-const CAMPATRACK_DEFAULT_USER_AVATAR = "assets/profile-richi.png";
+/** URLs de avatar de demostración antiguas — no deben tratarse como foto real del usuario */
+const CAMPATRACK_LEGACY_PROFILE_PHOTO_URLS = new Set([
+  "assets/profile-richi.png",
+  "assets/profile-randy.png",
+  "assets/profile-wiener.png"
+]);
+
+function normalizeCampatrackUserFotoValue(raw) {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  if (CAMPATRACK_LEGACY_PROFILE_PHOTO_URLS.has(t)) return "";
+  return t;
+}
+
+function hasUsableProfilePhotoUrl(raw) {
+  return normalizeCampatrackUserFotoValue(raw) !== "";
+}
+
+function pickCampatrackInitialLetterNombreUsuario(nombre, usuario, fallback = "?") {
+  const nome = String(nombre ?? "").trim();
+  const usr = String(usuario ?? "").trim();
+  const src = nome || usr;
+  if (!src) return fallback;
+  const fc = [...src][0];
+  try {
+    return fc.toLocaleUpperCase("es");
+  } catch {
+    return fc.toUpperCase();
+  }
+}
 
 /**
- * Usuario raíz solo en memoria (pruebas). No se guarda en BD ni en la lista local de usuarios.
- * Credenciales: usuario `admin` / clave `admin123`.
+ * Usuario interno solo en memoria. No existe en BD.
+ * Credenciales: `admin` / `admin` (validación solo en cliente).
  */
 const SYSTEM_ADMIN = {
   id: "admin",
   usuario: "admin",
-  clave: "admin123",
+  clave: "admin",
   nombre: "Administrador",
   apellido: "Sistema",
   cargo: "Administrador",
-  teamId: "ALL",
   permisos: "ALL",
 };
 
-function buildCampatrackSystemAdminSession() {
+function buildCampatrackSystemAdminSession(selectedTeamId) {
+  ensureCampatrackTeamsSeed();
+  const tid = resolveCampatrackTeamId(String(selectedTeamId || "").trim());
+  const teamIds = campatrackGetCanonTeamIds();
   return {
     id: SYSTEM_ADMIN.id,
     username: SYSTEM_ADMIN.usuario,
@@ -13112,9 +13330,11 @@ function buildCampatrackSystemAdminSession() {
     nombre: SYSTEM_ADMIN.nombre,
     apellido: SYSTEM_ADMIN.apellido,
     cargo: SYSTEM_ADMIN.cargo,
-    teamId: SYSTEM_ADMIN.teamId,
-    teamNombre: "Todos los equipos",
-    foto: CAMPATRACK_DEFAULT_USER_AVATAR,
+    teamId: tid,
+    teams: [...teamIds],
+    teamNombre: tid ? resolveCampatrackTeamNombre(tid) : "",
+    foto: "",
+    permissions: { canExport: true, canImport: true, canReset: true },
     campatrackSystemRoot: true,
   };
 }
@@ -13247,33 +13467,21 @@ async function campatrackHashPassword(username, plain) {
   return btoa(unescape(encodeURIComponent(base)));
 }
 
-async function campatrackVerifyPassword(username, plain, storedHash) {
-  const h = await campatrackHashPassword(username, plain);
-  return h === storedHash;
-}
-
-async function tryLocalCampatrackLogin(username, plainPassword) {
-  const u = String(username || "").trim();
-  const p = String(plainPassword || "");
-  if (!u || !p) return { ok: false, reason: "empty" };
-  const list = getCampatrackStoredUsers();
-  const key = u.toLowerCase();
-  for (const rec of list) {
-    if (String(rec.usuario || "").trim().toLowerCase() !== key) continue;
-    const estado = String(rec.estado || "activo").toLowerCase();
-    if (estado === "inactivo") return { ok: false, reason: "inactive" };
-    const hash = rec.clave;
-    if (typeof hash !== "string" || !hash) return { ok: false, reason: "badpass" };
-    const match = await campatrackVerifyPassword(rec.usuario, p, hash);
-    if (!match) return { ok: false, reason: "badpass" };
-    return { ok: true, record: rec };
-  }
-  return { ok: false, reason: "unknown" };
-}
-
-function buildCampatrackLocalSessionFromRecord(rec) {
+function buildCampatrackLocalSessionFromRecord(rec, preservedSession = null) {
   const modulos = { ...normalizeCampatrackUserModulos(rec.modulos) };
-  const teamId = resolveCampatrackTeamId(rec.teamId) || TEAM_GENERAL_ID;
+  const membershipTeams = campatrackNormalizeTeamsFromDraftRecord(rec);
+  const prev = preservedSession && typeof preservedSession === "object" ? preservedSession : null;
+  let teamId =
+    prev && String(prev.teamId || "").trim()
+      ? String(prev.teamId).trim()
+      : "";
+  teamId = resolveCampatrackTeamId(teamId) || teamId;
+  if (!teamId && membershipTeams.length) teamId = membershipTeams[0];
+  teamId = resolveCampatrackTeamId(teamId) || teamId;
+  let teamsArr = membershipTeams.slice();
+  if (!teamsArr.length && prev && Array.isArray(prev.teams)) {
+    teamsArr = [...new Set(prev.teams.map((x) => String(x || "").trim()).filter(campatrackIsCanonTeamId))];
+  }
   const username = String(rec.usuario || "").trim();
   return {
     id: username,
@@ -13282,11 +13490,13 @@ function buildCampatrackLocalSessionFromRecord(rec) {
     nombre: String(rec.nombre || "").trim(),
     apellido: String(rec.apellido || "").trim(),
     cargo: String(rec.cargo || "").trim(),
-    foto: String(rec.foto || "").trim() || CAMPATRACK_DEFAULT_USER_AVATAR,
+    foto: normalizeCampatrackUserFotoValue(rec.foto),
     campatrackLocalProfile: true,
     permisosModulos: modulos,
     teamId,
-    teamNombre: resolveCampatrackTeamNombre(teamId),
+    teams: teamsArr,
+    teamNombre: teamId ? resolveCampatrackTeamNombre(teamId) : "",
+    permissions: deriveToolbarPermissionsForStoredUserRecord(rec),
   };
 }
 
@@ -13298,13 +13508,12 @@ function campatrackRefreshSessionIfUserRecordMatches(updatedRecord) {
     String(updatedRecord.usuario || "").trim().toLowerCase();
   if (!same) return;
   try {
-    const next = buildCampatrackLocalSessionFromRecord(updatedRecord);
+    const next = buildCampatrackLocalSessionFromRecord(updatedRecord, u);
     window.currentUser = {
       ...next,
       permissions: resolveCampatrackSessionPermissions(next)
     };
     appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
-    persistCampatrackSessionToBrowserStorage();
   } catch (_) {
     /* ignore */
   }
@@ -13338,7 +13547,6 @@ function campatrackApplyLoginSuccessToStorage(sessionUser) {
     appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
     appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(sessionUser.role));
     appMemoryKV.setItem(LS_CAMPATRACK_USER, String(sessionUser.username ?? ""));
-    persistCampatrackSessionToBrowserStorage();
   } catch (se) {
     console.warn("No se pudo guardar sesión", se);
   }
@@ -13417,70 +13625,11 @@ function initAppThemeToggle() {
 const SS_USUARIO_LOGUEADO = "usuario_logueado";
 /** Sesión backend: { username, role } — clave solicitada por el contrato de API */
 const SS_USER_SESSION_JSON = "user";
+/** Tras login con `reload()`, evita un segundo GET a `/api/data` ya que la data acaba de persistirse. */
+const SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH = "campatrack_skip_next_dashboard_backend_fetch";
 const API_LOGIN_URL = `${CAMPATRACK_API_ORIGIN}/api/login`;
 
-/** Sobrevive a `location.reload()` (tab); no usa `localStorage`. */
-const CAMPATRACK_BROWSER_USER_KEY = "campatrack_session_snapshot_v1";
-
-function persistCampatrackSessionToBrowserStorage() {
-  let u = null;
-  try {
-    if (window.currentUser != null && typeof window.currentUser === "object") u = window.currentUser;
-    else u = getUser();
-  } catch (_) {
-    u = null;
-  }
-  if (!u || !String(u.username || "").trim()) return;
-  try {
-    const idStr = u.id != null ? String(u.id) : String(u.username).trim();
-    let withId;
-    if (u.campatrackSystemRoot === true) {
-      withId = { ...u, id: idStr };
-    } else {
-      const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
-      withId = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
-    }
-    const withPerms = { ...withId, permissions: resolveCampatrackSessionPermissions(withId) };
-    window.currentUser = withPerms;
-    sessionStorage.setItem(CAMPATRACK_BROWSER_USER_KEY, JSON.stringify(withPerms));
-  } catch (e) {
-    console.warn("No se pudo persistir sesión en sessionStorage", e);
-  }
-}
-
-function restaurarCampatrackSessionDesdeBrowserStorage() {
-  try {
-    const raw = sessionStorage.getItem(CAMPATRACK_BROWSER_USER_KEY);
-    if (!raw) return;
-    const u = JSON.parse(raw);
-    if (!u || typeof u !== "object" || !String(u.username || "").trim()) return;
-    if (u.role === undefined || String(u.role).trim() === "") return;
-    const idStr = u.id != null ? String(u.id) : String(u.username).trim();
-    if (u.campatrackSystemRoot === true) {
-      window.currentUser = {
-        ...u,
-        id: idStr,
-        permissions: resolveCampatrackSessionPermissions({ ...u, id: idStr })
-      };
-    } else {
-      const tid = resolveCampatrackTeamId(u.teamId) || TEAM_GENERAL_ID;
-      const merged = { ...u, id: idStr, teamId: tid, teamNombre: resolveCampatrackTeamNombre(tid) };
-      window.currentUser = {
-        ...merged,
-        permissions: resolveCampatrackSessionPermissions(merged)
-      };
-    }
-    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
-    appMemorySession.setItem(SS_USUARIO_LOGUEADO, "true");
-    appMemoryKV.setItem(LS_CAMPATRACK_AUTH, "true");
-    appMemoryKV.setItem(LS_CAMPATRACK_ROLE, normalizeCampatrackRoleKey(window.currentUser.role));
-    appMemoryKV.setItem(LS_CAMPATRACK_USER, String(window.currentUser.username ?? ""));
-  } catch (e) {
-    console.warn("restaurarCampatrackSessionDesdeBrowserStorage", e);
-  }
-}
-
-/** Control central de sesión (memoria + sessionStorage tras login). */
+/** Control central de sesión en memoria (`appMemorySession` / `window.currentUser`). */
 function isAuthenticated() {
   try {
     if (window.currentUser != null && typeof window.currentUser === "object") return true;
@@ -13491,24 +13640,84 @@ function isAuthenticated() {
 /** Permisos de exportar / importar / reset por rol (base antes de overrides en sesión). */
 function computeCampatrackToolbarPermissionsFromRole(user) {
   const role = normalizeCampatrackRoleKey(user?.role);
-  const isWiener = String(user?.username || "").trim().toLowerCase() === "wiener";
   return {
-    canExport: role === "admin" || (role === "usuario" && !isWiener),
-    canImport: role === "admin" || role === "usuario" || (role === "viewer" && isWiener),
+    canExport: role === "admin" || role === "usuario",
+    canImport: role === "admin" || role === "usuario",
     canReset: role === "admin"
   };
 }
 
-/** Combina `user.permissions` explícitos con reglas por rol. */
+function deriveToolbarPermissionsForStoredUserRecord(rec) {
+  const p = rec?.permissions;
+  if (p != null && typeof p === "object" && !Array.isArray(p)) {
+    return {
+      canExport: p.canExport === true,
+      canImport: p.canImport === true,
+      canReset: p.canReset === true
+    };
+  }
+  return computeCampatrackToolbarPermissionsFromRole({
+    role: normalizeCampatrackRoleKey(rec?.rol ?? "usuario"),
+    username: String(rec?.usuario || "").trim()
+  });
+}
+
+/**
+ * Si existe `permissions` en la sesión, solo los `true` explícitos activan cada acción; si falta el objeto se usan las reglas por rol.
+ */
 function resolveCampatrackSessionPermissions(user) {
-  const defaults = computeCampatrackToolbarPermissionsFromRole(user);
   const p = user?.permissions;
-  if (!p || typeof p !== "object" || Array.isArray(p)) return defaults;
-  return {
-    canExport: typeof p.canExport === "boolean" ? p.canExport : defaults.canExport,
-    canImport: typeof p.canImport === "boolean" ? p.canImport : defaults.canImport,
-    canReset: typeof p.canReset === "boolean" ? p.canReset : defaults.canReset
-  };
+  if (p != null && typeof p === "object" && !Array.isArray(p)) {
+    return {
+      canExport: p.canExport === true,
+      canImport: p.canImport === true,
+      canReset: p.canReset === true
+    };
+  }
+  return computeCampatrackToolbarPermissionsFromRole(user);
+}
+
+/**
+ * Tras hidratar el bundle (login API / refresco), copia nombre, apellido, cargo, foto, equipo y permisos
+ * desde `campatrack_users_db` a la sesión para el header y la navegación por módulos.
+ */
+function campatrackMergeSessionProfileFromDraftUsers() {
+  const raw =
+    window.currentUser != null && typeof window.currentUser === "object" ? window.currentUser : null;
+  if (!raw || raw.campatrackSystemRoot === true) return;
+  const uname = String(raw.username || "").trim().toLowerCase();
+  if (!uname) return;
+  const list = getCampatrackStoredUsers();
+  const rec = list.find((r) => String(r.usuario || "").trim().toLowerCase() === uname);
+  if (!rec) return;
+  if (String(rec.estado || "activo").toLowerCase() === "inactivo") return;
+  try {
+    const merged = buildCampatrackLocalSessionFromRecord(rec, raw);
+    const prev = raw && typeof raw === "object" ? { ...raw } : {};
+    const nextPerms = resolveCampatrackSessionPermissions(merged);
+    /** No pisar datos ya traídos por `/api/login` (profile_json) si el borrador no los trae. */
+    let fotoOut = normalizeCampatrackUserFotoValue(merged.foto);
+    if (!hasUsableProfilePhotoUrl(fotoOut) && hasUsableProfilePhotoUrl(prev.foto)) {
+      fotoOut = normalizeCampatrackUserFotoValue(prev.foto);
+    }
+    let nombreOut = String(merged.nombre || "").trim();
+    let apellidoOut = String(merged.apellido || "").trim();
+    let cargoOut = String(merged.cargo || "").trim();
+    if (!nombreOut && String(prev.nombre || "").trim()) nombreOut = String(prev.nombre).trim();
+    if (!apellidoOut && String(prev.apellido || "").trim()) apellidoOut = String(prev.apellido).trim();
+    if (!cargoOut && String(prev.cargo || "").trim()) cargoOut = String(prev.cargo).trim();
+    window.currentUser = {
+      ...merged,
+      nombre: nombreOut,
+      apellido: apellidoOut,
+      cargo: cargoOut,
+      foto: fotoOut,
+      permissions: nextPerms,
+    };
+    appMemorySession.setItem(SS_USER_SESSION_JSON, JSON.stringify(window.currentUser));
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function getUser() {
@@ -13571,26 +13780,10 @@ const CAMPATRACK_ALLOWED_MODULES_BY_ROLE = {
   viewer: new Set(["dashboard"]),
 };
 const CAMPATRACK_PROFILE_BY_ROLE = {
-  admin: {
-    name: "Richito Gonzales",
-    title: "Analista Digital",
-    avatar: "assets/profile-richi.png",
-  },
-  usuario: {
-    name: "Randy Escobar",
-    title: "Digital Performance Specialist",
-    avatar: "assets/profile-randy.png",
-  },
-  planner: {
-    name: "Planner",
-    title: "Planning y dashboard",
-    avatar: "assets/profile-randy.png",
-  },
-  viewer: {
-    name: "Usuario Viewer",
-    title: "Solo Dashboard",
-    avatar: "assets/profile-wiener.png",
-  },
+  admin: { name: "Usuario", title: "Sesión iniciada", avatar: "" },
+  usuario: { name: "Usuario", title: "", avatar: "" },
+  planner: { name: "Usuario", title: "Planning", avatar: "" },
+  viewer: { name: "Usuario", title: "Solo lectura", avatar: "" },
 };
 
 function isCampatrackAuthenticated() {
@@ -13657,19 +13850,47 @@ function refreshCampatrackTeamHeader() {
   }
 }
 
+/** Un solo hijo dentro del botón del header: foto o inicial (mutuamente excluyente). */
+function mountCampatrackHeaderAvatar(showPhoto, fotoFinal, altText, initialLetter) {
+  const btn = document.getElementById("appProfileAvatarBtn");
+  if (!(btn instanceof HTMLButtonElement)) return;
+  btn.replaceChildren();
+
+  function renderCampatrackHeaderAvatarImagen(src, alt) {
+    const img = document.createElement("img");
+    img.className = "app-profile-avatar app-profile-avatar--photo";
+    img.alt = alt || "";
+    img.decoding = "async";
+    img.src = src;
+    btn.appendChild(img);
+  }
+
+  function renderCampatrackHeaderAvatarInicial(letra) {
+    const span = document.createElement("span");
+    span.className = "app-profile-avatar app-profile-avatar--letter";
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = letra;
+    btn.appendChild(span);
+  }
+
+  if (showPhoto && fotoFinal) {
+    renderCampatrackHeaderAvatarImagen(String(fotoFinal).trim(), altText);
+    return;
+  }
+  renderCampatrackHeaderAvatarInicial(initialLetter || "?");
+}
+
 function syncCampatrackProfileHeader() {
-  const avatar = document.getElementById("appProfileAvatarImage");
   const name = document.getElementById("appProfileName");
   const roleEl = document.getElementById("appProfileRole");
   const roleKey = getCampatrackRole();
   const profile = CAMPATRACK_PROFILE_BY_ROLE[roleKey] || CAMPATRACK_PROFILE_BY_ROLE.admin;
-  const sess = getUser();
-  const fromLocal =
+  const sess = typeof getUser === "function" ? getUser() : null;
+  const hasNombreCompleto =
     sess &&
-    sess.campatrackLocalProfile === true &&
     String(sess.nombre || "").trim() !== "" &&
     String(sess.apellido || "").trim() !== "";
-  const displayName = fromLocal
+  const displayName = hasNombreCompleto
     ? `${String(sess.nombre).trim()} ${String(sess.apellido).trim()}`
     : sess && sess.username !== undefined && String(sess.username).trim() !== ""
       ? String(sess.username).trim()
@@ -13678,14 +13899,15 @@ function syncCampatrackProfileHeader() {
     sess && sess.cargo !== undefined && String(sess.cargo || "").trim() !== ""
       ? String(sess.cargo).trim()
       : profile.title;
-  const foto =
-    sess && sess.foto !== undefined && String(sess.foto || "").trim() !== ""
-      ? String(sess.foto).trim()
-      : profile.avatar;
-  if (avatar instanceof HTMLImageElement) {
-    avatar.src = foto;
-    avatar.alt = displayName;
-  }
+  const fotoFinal = sess
+    ? normalizeCampatrackUserFotoValue(sess.foto)
+    : normalizeCampatrackUserFotoValue(profile.avatar);
+  const showPhoto = hasUsableProfilePhotoUrl(fotoFinal);
+  const initial = pickCampatrackInitialLetterNombreUsuario(
+    hasNombreCompleto ? sess?.nombre : displayName,
+    sess?.username
+  );
+  mountCampatrackHeaderAvatar(showPhoto, fotoFinal, displayName, initial);
   if (name) name.textContent = displayName;
   if (roleEl) roleEl.textContent = titleText;
   refreshCampatrackTeamHeader();
@@ -13699,7 +13921,6 @@ function bootstrapCampatrackAuthShell() {
   if (!ok) {
     try {
       window.currentUser = null;
-      sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
       appMemorySession.removeItem(SS_USUARIO_LOGUEADO);
       appMemorySession.removeItem(SS_USER_SESSION_JSON);
       appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
@@ -13721,7 +13942,6 @@ function bootstrapCampatrackAuthShell() {
     if (!ok) {
       try {
         window.currentUser = null;
-        sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
         appMemorySession.removeItem(SS_USUARIO_LOGUEADO);
         appMemorySession.removeItem(SS_USER_SESSION_JSON);
         appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
@@ -13742,7 +13962,6 @@ let appActivateMainModule = null;
 function campatrackPerformLogout() {
   try {
     window.currentUser = null;
-    sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
     appMemorySession.clear();
     appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
     appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
@@ -13758,7 +13977,6 @@ function campatrackPerformLogout() {
 function campatrackPerformLogoutToIndex() {
   try {
     window.currentUser = null;
-    sessionStorage.removeItem(CAMPATRACK_BROWSER_USER_KEY);
     appMemorySession.clear();
     appMemoryKV.removeItem(LS_CAMPATRACK_AUTH);
     appMemoryKV.removeItem(LS_CAMPATRACK_ROLE);
@@ -13831,27 +14049,73 @@ function initUsuariosModule() {
 
   let photoDataUrl = null;
   let editingUserId = null;
-  let editingOriginalFoto = CAMPATRACK_DEFAULT_USER_AVATAR;
+  let editingOriginalFoto = "";
 
   const el = (id) => document.getElementById(id);
 
+  const syncUsersModalPhotoUi = () => {
+    const prevImg = el("usersPhotoPreview");
+    const prevLetter = el("usersPhotoPreviewLetter");
+    const wrap = el("usersPhotoPreviewWrap");
+    const dzEl = el("usersPhotoDropzone");
+    const nombrePart = el("usersNombre") instanceof HTMLInputElement ? el("usersNombre").value : "";
+    const usuarioPart = el("usersUsuario") instanceof HTMLInputElement ? el("usersUsuario").value : "";
+    const url =
+      typeof photoDataUrl === "string" && photoDataUrl.startsWith("data:image")
+        ? photoDataUrl
+        : hasUsableProfilePhotoUrl(editingOriginalFoto)
+          ? String(editingOriginalFoto).trim()
+          : "";
+    if (url) {
+      if (prevImg instanceof HTMLImageElement) prevImg.src = url;
+      prevImg?.classList.remove("hidden");
+      prevLetter?.classList.add("hidden");
+      wrap?.classList.remove("hidden");
+      dzEl?.classList.add("users-photo-dropzone--compact");
+      return;
+    }
+    const letter = pickCampatrackInitialLetterNombreUsuario(nombrePart, usuarioPart);
+    const showLetterPreview =
+      editingUserId != null || !!nombrePart.trim() || !!usuarioPart.trim();
+    if (showLetterPreview) {
+      if (prevLetter instanceof HTMLElement) prevLetter.textContent = letter;
+      prevLetter?.classList.remove("hidden");
+      prevImg?.classList.add("hidden");
+      wrap?.classList.remove("hidden");
+      dzEl?.classList.add("users-photo-dropzone--compact");
+    } else {
+      wrap?.classList.add("hidden");
+      dzEl?.classList.remove("users-photo-dropzone--compact");
+      prevLetter?.classList.add("hidden");
+      prevImg?.classList.add("hidden");
+    }
+  };
+
   ensureCampatrackTeamsSeed();
 
-  const fillUsersTeamSelect = (selectedId) => {
-    const sel = el("usersTeamSelect");
-    if (!(sel instanceof HTMLSelectElement)) return;
-    const teams = getCampatrackStoredTeams();
-    const want = String(selectedId || "").trim() || TEAM_GENERAL_ID;
-    const escOpt = (s) => escapeHtml(String(s ?? ""));
-    sel.innerHTML = teams
+  const teamsChecksHost = el("usersTeamsChecks");
+
+  const getSelectedTeamsFromChecks = () => {
+    const out = [];
+    if (!teamsChecksHost) return out;
+    teamsChecksHost.querySelectorAll("input.users-team-chk:checked").forEach((ch) => {
+      if (ch instanceof HTMLInputElement && campatrackIsCanonTeamId(ch.value)) out.push(String(ch.value).trim());
+    });
+    return [...new Set(out)];
+  };
+
+  const renderUsersTeamsCheckboxes = (selectedIds) => {
+    ensureCampatrackTeamsSeed();
+    if (!teamsChecksHost) return;
+    const want = new Set((Array.isArray(selectedIds) ? selectedIds : []).filter(campatrackIsCanonTeamId));
+    teamsChecksHost.innerHTML = campatrackCanonTeamDefinitions()
       .map((t) => {
-        const id = String(t.id || "").trim();
-        const label = String(t.nombre || id || "").trim() || id;
-        return `<option value="${escOpt(id)}">${escOpt(label)}</option>`;
+        const id = escapeHtml(String(t.id));
+        const lbl = escapeHtml(String(t.nombre));
+        const checked = want.has(t.id) ? " checked" : "";
+        return `<label class="users-team-chk-row"><input type="checkbox" class="users-team-chk" value="${id}"${checked}/><span>${lbl}</span></label>`;
       })
       .join("");
-    if ([...sel.options].some((o) => o.value === want)) sel.value = want;
-    else if (sel.options.length) sel.selectedIndex = 0;
   };
 
   const renderUsersList = () => {
@@ -13868,14 +14132,22 @@ function initUsuariosModule() {
       return `<span class="users-estado-badge users-estado-badge--on">Activo</span>`;
     };
     listBody.innerHTML = `<table class="users-list-table data-table"><thead><tr>
-      <th>Foto</th><th>Nombre completo</th><th>Cargo</th><th>Equipo</th><th>Usuario</th><th>Estado</th><th class="users-list-actions-col">Acciones</th>
+      <th>Foto</th><th>Nombre completo</th><th>Cargo</th><th>Equipos</th><th>Usuario</th><th>Estado</th><th class="users-list-actions-col">Acciones</th>
     </tr></thead><tbody>${rows
       .map((r) => {
         const id = esc(r.id);
         const inactive = String(r.estado || "").toLowerCase() === "inactivo";
-        const teamLabel = esc(resolveCampatrackTeamNombre(r.teamId || TEAM_GENERAL_ID));
+        const ids = campatrackNormalizeTeamsFromDraftRecord(r);
+        const teamLabel = esc(
+          ids.length ? ids.map((tid) => resolveCampatrackTeamNombre(tid) || tid).join(", ") : "—"
+        );
+        const fotoNorm = normalizeCampatrackUserFotoValue(r.foto);
+        const ini = pickCampatrackInitialLetterNombreUsuario(r.nombre, r.usuario);
+        const avatarCell = hasUsableProfilePhotoUrl(fotoNorm)
+          ? `<img class="users-list-avatar users-list-avatar--img" src="${esc(fotoNorm)}" alt="" width="40" height="40" loading="lazy" />`
+          : `<span class="users-list-avatar users-list-avatar--letter" aria-hidden="true">${esc(ini)}</span>`;
         return `<tr data-user-id="${id}">
-      <td class="users-list-avatar-cell"><img class="users-list-avatar" src="${esc(r.foto || CAMPATRACK_DEFAULT_USER_AVATAR)}" alt="" width="40" height="40" loading="lazy" /></td>
+      <td class="users-list-avatar-cell">${avatarCell}</td>
       <td>${esc([r.nombre, r.apellido].filter(Boolean).join(" "))}</td>
       <td>${esc(r.cargo)}</td>
       <td>${teamLabel}</td>
@@ -14052,12 +14324,7 @@ function initUsuariosModule() {
       const r = reader.result;
       if (typeof r === "string") {
         photoDataUrl = r;
-        const prev = el("usersPhotoPreview");
-        const wrap = el("usersPhotoPreviewWrap");
-        const dz = el("usersPhotoDropzone");
-        if (prev instanceof HTMLImageElement) prev.src = r;
-        wrap?.classList.remove("hidden");
-        dz?.classList.add("users-photo-dropzone--compact");
+        syncUsersModalPhotoUi();
       }
     };
     reader.readAsDataURL(file);
@@ -14068,12 +14335,15 @@ function initUsuariosModule() {
     if (inp instanceof HTMLInputElement) inp.value = "";
     el("usersPhotoPreviewWrap")?.classList.add("hidden");
     el("usersPhotoDropzone")?.classList.remove("users-photo-dropzone--compact");
+    el("usersPhotoPreviewLetter")?.classList.add("hidden");
+    el("usersPhotoPreview")?.classList.add("hidden");
     showErr("usersPhotoError", "");
   };
 
   const resetPhoto = () => {
     photoDataUrl = null;
     resetPhotoUiOnly();
+    syncUsersModalPhotoUi();
   };
 
   const resetUsersPasswordFieldUi = () => {
@@ -14093,7 +14363,7 @@ function initUsuariosModule() {
   function resetForm() {
     clearFieldErrors();
     editingUserId = null;
-    editingOriginalFoto = CAMPATRACK_DEFAULT_USER_AVATAR;
+    editingOriginalFoto = "";
     resetPhoto();
     const n = el("usersNombre");
     const a = el("usersApellido");
@@ -14107,9 +14377,7 @@ function initUsuariosModule() {
       u.value = "";
       u.readOnly = false;
     }
-    const teamNew = el("usersTeamNew");
-    if (teamNew instanceof HTMLInputElement) teamNew.value = "";
-    fillUsersTeamSelect(TEAM_GENERAL_ID);
+    renderUsersTeamsCheckboxes([]);
     getChecks().forEach((ch) => {
       if (ch instanceof HTMLInputElement) ch.checked = false;
     });
@@ -14118,7 +14386,12 @@ function initUsuariosModule() {
       master.checked = false;
       master.indeterminate = false;
     }
+    for (const permId of ["usersPermExport", "usersPermImport", "usersPermReset"]) {
+      const n = el(permId);
+      if (n instanceof HTMLInputElement) n.checked = false;
+    }
     applyFormModeUi();
+    syncUsersModalPhotoUi();
   }
 
   const loadUserForEdit = (id) => {
@@ -14127,7 +14400,7 @@ function initUsuariosModule() {
     if (!r) return;
     clearFieldErrors();
     editingUserId = r.id;
-    editingOriginalFoto = String(r.foto || CAMPATRACK_DEFAULT_USER_AVATAR).trim() || CAMPATRACK_DEFAULT_USER_AVATAR;
+    editingOriginalFoto = normalizeCampatrackUserFotoValue(r.foto);
     const n = el("usersNombre");
     const a = el("usersApellido");
     const c = el("usersCargo");
@@ -14161,35 +14434,25 @@ function initUsuariosModule() {
       }
     }
     resetPhotoUiOnly();
-    photoDataUrl = null;
-    const fotoStr = editingOriginalFoto;
-    if (fotoStr.startsWith("data:image")) {
-      photoDataUrl = fotoStr;
-      const prev = el("usersPhotoPreview");
-      const wrap = el("usersPhotoPreviewWrap");
-      const dz = el("usersPhotoDropzone");
-      if (prev instanceof HTMLImageElement) prev.src = fotoStr;
-      wrap?.classList.remove("hidden");
-      dz?.classList.add("users-photo-dropzone--compact");
-    } else if (fotoStr) {
-      const prev = el("usersPhotoPreview");
-      const wrap = el("usersPhotoPreviewWrap");
-      const dz = el("usersPhotoDropzone");
-      if (prev instanceof HTMLImageElement) prev.src = fotoStr;
-      wrap?.classList.remove("hidden");
-      dz?.classList.add("users-photo-dropzone--compact");
-    } else {
-      resetPhoto();
-    }
+    photoDataUrl =
+      editingOriginalFoto && String(editingOriginalFoto).startsWith("data:image")
+        ? editingOriginalFoto
+        : null;
+    syncUsersModalPhotoUi();
     const modMap = normalizeCampatrackUserModulos(r.modulos);
     CAMPATRACK_REGISTER_MODULE_CARDS.forEach((c) => {
       const ch = modGrid.querySelector(`input.users-mod-check[value="${c.id}"]`);
       if (ch instanceof HTMLInputElement) ch.checked = !!modMap[c.id];
     });
     syncSelectAllCheckbox();
-    fillUsersTeamSelect(String(r.teamId || "").trim() || TEAM_GENERAL_ID);
-    const teamNewInp = el("usersTeamNew");
-    if (teamNewInp instanceof HTMLInputElement) teamNewInp.value = "";
+    renderUsersTeamsCheckboxes(campatrackNormalizeTeamsFromDraftRecord(r));
+    const tp = deriveToolbarPermissionsForStoredUserRecord(r);
+    const pe = el("usersPermExport");
+    const pi = el("usersPermImport");
+    const pr = el("usersPermReset");
+    if (pe instanceof HTMLInputElement) pe.checked = tp.canExport;
+    if (pi instanceof HTMLInputElement) pi.checked = tp.canImport;
+    if (pr instanceof HTMLInputElement) pr.checked = tp.canReset;
     applyFormModeUi();
     openUsersModal();
   };
@@ -14258,12 +14521,8 @@ function initUsuariosModule() {
       showErr("usersUsuarioErr", "Este nombre de usuario ya está registrado.");
       ok = false;
     }
-    const teamSel = el("usersTeamSelect");
-    const teamNewInp = el("usersTeamNew");
-    const newTeamName = teamNewInp instanceof HTMLInputElement ? String(teamNewInp.value || "").trim() : "";
-    const teamPick = teamSel instanceof HTMLSelectElement ? String(teamSel.value || "").trim() : "";
-    if (!newTeamName && !teamPick) {
-      showErr("usersTeamErr", "Selecciona un equipo o escribe el nombre de uno nuevo.");
+    if (!getSelectedTeamsFromChecks().length) {
+      showErr("usersTeamErr", "Selecciona al menos un equipo.");
       ok = false;
     }
     return ok;
@@ -14332,16 +14591,10 @@ function initUsuariosModule() {
   });
 
   el("usersPhotoClearBtn")?.addEventListener("click", () => {
-    resetPhoto();
-    if (editingUserId != null) {
-      editingOriginalFoto = CAMPATRACK_DEFAULT_USER_AVATAR;
-      const prev = el("usersPhotoPreview");
-      const wrap = el("usersPhotoPreviewWrap");
-      const dzEl = el("usersPhotoDropzone");
-      if (prev instanceof HTMLImageElement) prev.src = CAMPATRACK_DEFAULT_USER_AVATAR;
-      wrap?.classList.remove("hidden");
-      dzEl?.classList.add("users-photo-dropzone--compact");
-    }
+    photoDataUrl = null;
+    if (editingUserId != null) editingOriginalFoto = "";
+    resetPhotoUiOnly();
+    syncUsersModalPhotoUi();
   });
 
   el("usersSelectAllModsChk")?.addEventListener("change", () => {
@@ -14422,22 +14675,17 @@ function initUsuariosModule() {
       modObj[c.id] = ch instanceof HTMLInputElement && ch.checked;
     });
     const modulos = campatrackUserModulosToIdList(modObj);
-    const teamSel = el("usersTeamSelect");
-    const teamNewInp = el("usersTeamNew");
-    const newTeamName = teamNewInp instanceof HTMLInputElement ? String(teamNewInp.value || "").trim() : "";
-    let teamIdResolved = teamSel instanceof HTMLSelectElement ? String(teamSel.value || "").trim() : "";
-    if (newTeamName) {
-      const teamsList = getCampatrackStoredTeams();
-      const id = newCampatrackTeamId();
-      teamsList.push({ id, nombre: newTeamName });
-      saveCampatrackStoredTeams(teamsList);
-      teamIdResolved = id;
-      fillUsersTeamSelect(teamIdResolved);
-      if (teamNewInp instanceof HTMLInputElement) teamNewInp.value = "";
-    }
-    if (!teamIdResolved) teamIdResolved = TEAM_GENERAL_ID;
+    const teamsSaved = getSelectedTeamsFromChecks().sort();
     const list = getCampatrackStoredUsers();
     const isEdit = editingUserId != null;
+    const toolbarPerms = {
+      canExport: el("usersPermExport") instanceof HTMLInputElement && el("usersPermExport").checked,
+      canImport: el("usersPermImport") instanceof HTMLInputElement && el("usersPermImport").checked,
+      canReset: el("usersPermReset") instanceof HTMLInputElement && el("usersPermReset").checked
+    };
+    let fotoOut = "";
+    if (typeof photoDataUrl === "string" && photoDataUrl.startsWith("data:image")) fotoOut = photoDataUrl;
+    else if (isEdit && hasUsableProfilePhotoUrl(editingOriginalFoto)) fotoOut = String(editingOriginalFoto).trim();
     let record;
     if (isEdit) {
       const idx = list.findIndex((x) => String(x.id) === String(editingUserId));
@@ -14448,7 +14696,6 @@ function initUsuariosModule() {
       const prev = list[idx];
       const hash =
         clave.length > 0 ? await campatrackHashPassword(usuario, clave) : String(prev.clave || "");
-      const foto = photoDataUrl || editingOriginalFoto || CAMPATRACK_DEFAULT_USER_AVATAR;
       record = {
         ...prev,
         nombre,
@@ -14457,14 +14704,15 @@ function initUsuariosModule() {
         usuario,
         clave: hash,
         clave_plano: clave,
-        foto,
+        foto: fotoOut,
         modulos,
-        teamId: teamIdResolved,
+        teams: teamsSaved,
+        permissions: toolbarPerms
       };
+      delete record.teamId;
       list[idx] = record;
     } else {
       const hash = await campatrackHashPassword(usuario, clave);
-      const foto = photoDataUrl || CAMPATRACK_DEFAULT_USER_AVATAR;
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
@@ -14477,12 +14725,13 @@ function initUsuariosModule() {
         clave: hash,
         clave_plano: clave,
         cargo,
-        foto,
+        foto: fotoOut,
         estado: "activo",
         rol: "usuario",
         modulos,
-        teamId: teamIdResolved,
+        teams: teamsSaved,
         fecha_creacion: new Date().toISOString(),
+        permissions: toolbarPerms
       };
       list.push(record);
     }
@@ -14518,8 +14767,12 @@ function initUsuariosModule() {
         showErr(errId, "");
       }
     };
-    el("usersNombre")?.addEventListener("input", () => run(el("usersNombre"), "usersNombreErr"));
+    el("usersNombre")?.addEventListener("input", () => {
+      run(el("usersNombre"), "usersNombreErr");
+      syncUsersModalPhotoUi();
+    });
     el("usersApellido")?.addEventListener("input", () => run(el("usersApellido"), "usersApellidoErr"));
+    el("usersUsuario")?.addEventListener("input", () => syncUsersModalPhotoUi());
   };
   bindNombreApellidoLive();
 
@@ -14548,21 +14801,13 @@ function escapeAuditoriaCell(v) {
   return escapeHtml(cut);
 }
 
-function auditoriaUsuarioPuedeVerTodosLosEquipos() {
-  const u = typeof getUser === "function" ? getUser() : null;
-  if (!u) return false;
-  if (u.campatrackSystemRoot === true) return true;
-  const t = String(u.teamId ?? "").trim().toUpperCase();
-  return t === "" || t === "ALL";
-}
-
 function getAuditoriaRowsFilteredForUi() {
   const list = ensureAuditoriaDraftShape();
   const u = typeof getUser === "function" ? getUser() : null;
   const userTeamRaw = u?.teamId != null ? String(u.teamId).trim() : "";
-  const userTeam = userTeamRaw ? resolveCampatrackTeamId(userTeamRaw) || userTeamRaw : TEAM_GENERAL_ID;
+  const userTeam = userTeamRaw ? resolveCampatrackTeamId(userTeamRaw) || userTeamRaw : "";
   let rows = list.filter((r) => {
-    if (auditoriaUsuarioPuedeVerTodosLosEquipos()) return true;
+    if (!userTeam) return false;
     return String(r.teamId ?? "").trim() === String(userTeam).trim();
   });
   const modF = String(document.getElementById("auditFilterModulo")?.value || "").trim();
@@ -14682,19 +14927,19 @@ function initCampatrackLogin() {
   const passToggle = document.getElementById("campatrackPassToggle");
   const forgot = document.getElementById("campatrackLoginForgot");
   const sso = document.getElementById("campatrackLoginSso");
-  const LS_LOGIN_REMEMBER = "campatrack_login_remember_user";
 
-  try {
-    const saved = localStorage.getItem(LS_LOGIN_REMEMBER);
-    const rememberCb = document.getElementById("campatrackLoginRemember");
-    const userIn = document.getElementById("campatrackUser");
-    if (saved && rememberCb instanceof HTMLInputElement && userIn instanceof HTMLInputElement) {
-      rememberCb.checked = true;
-      if (!String(userIn.value || "").trim()) userIn.value = saved;
-    }
-  } catch (_) {
-    /* ignore */
+  function fillCampatrackLoginTeamSelect() {
+    const sel = document.getElementById("campatrackLoginTeam");
+    if (!(sel instanceof HTMLSelectElement)) return;
+    sel.innerHTML = `<option value="">${escapeHtml("— Equipo —")}</option>${campatrackCanonTeamDefinitions()
+      .map(
+        (t) =>
+          `<option value="${escapeHtml(String(t.id))}">${escapeHtml(String(t.nombre))}</option>`
+      )
+      .join("")}`;
   }
+  ensureCampatrackTeamsSeed();
+  fillCampatrackLoginTeamSelect();
 
   passToggle?.addEventListener("click", () => {
     if (!(passEl instanceof HTMLInputElement)) return;
@@ -14727,57 +14972,62 @@ function initCampatrackLogin() {
     e.preventDefault();
     const u = String(document.getElementById("campatrackUser")?.value || "").trim();
     const p = String(document.getElementById("campatrackPass")?.value || "").trim();
+    const teamEl = document.getElementById("campatrackLoginTeam");
+    const selTeam =
+      teamEl instanceof HTMLSelectElement ? String(teamEl.value || "").trim() : "";
     const submitBtn = form?.querySelector('button[type="submit"]');
     err?.classList.add("hidden");
+    if (err) err.textContent = "Credenciales incorrectas";
+    if (!selTeam) {
+      if (err) {
+        err.textContent = "Selecciona un equipo.";
+        err.classList.remove("hidden");
+      }
+      return;
+    }
+    if (!campatrackIsCanonTeamId(selTeam)) {
+      if (err) {
+        err.textContent = "Equipo no válido.";
+        err.classList.remove("hidden");
+      }
+      return;
+    }
     if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
     const finishOk = async (loggedInUser) => {
-      showCampatrackLoginLoading();
+      err?.classList.add("hidden");
+      const uOk =
+        loggedInUser && String(loggedInUser.username || "").trim()
+          ? loggedInUser
+          : typeof getUser === "function"
+            ? getUser()
+            : null;
+      let preloadedBundle = null;
       try {
-        try {
-          const rememberCb = document.getElementById("campatrackLoginRemember");
-          const userIn = document.getElementById("campatrackUser");
-          const un = String(userIn?.value || "").trim();
-          if (rememberCb instanceof HTMLInputElement) {
-            if (rememberCb.checked && un) localStorage.setItem(LS_LOGIN_REMEMBER, un);
-            else localStorage.removeItem(LS_LOGIN_REMEMBER);
-          }
-        } catch (_) {
-          /* ignore */
-        }
-        err?.classList.add("hidden");
-        const uOk =
-          loggedInUser && String(loggedInUser.username || "").trim()
-            ? loggedInUser
-            : typeof getUser === "function"
-              ? getUser()
-              : null;
-        let preloadedBundle = null;
-        try {
-          if (uOk) {
+        if (uOk) {
+          try {
             preloadedBundle = await afterLoginSuccess(uOk);
+          } catch (e) {
+            console.error("Error cargando data:", e);
           }
-        } catch (e) {
-          console.error("Error cargando data:", e);
         }
-        bootstrapCampatrackAuthShell();
-        try {
-          if (appActivateMainModule && isCampatrackAuthenticated()) {
-            appActivateMainModule("dashboard");
-          }
-        } catch (_) {}
-        try {
-          await cargarDataDesdeAPI(true, {
-            fetchedFromLogin: true,
-            preloadedBundle,
-          });
-        } catch (_) {}
-      } finally {
-        hideCampatrackLoginLoading();
+        await cargarDataDesdeAPI(true, {
+          fetchedFromLogin: true,
+          preloadedBundle,
+        });
+      } catch (e) {
+        console.error("Error cargando data:", e);
       }
+      bootstrapCampatrackAuthShell();
+      try {
+        if (appActivateMainModule && isCampatrackAuthenticated()) {
+          appActivateMainModule("dashboard");
+        }
+      } catch (_) {}
+      resetPublishDraftAfterServerHydrate();
     };
     try {
       if (u === SYSTEM_ADMIN.usuario && p === SYSTEM_ADMIN.clave) {
-        const sessionUser = buildCampatrackSystemAdminSession();
+        const sessionUser = buildCampatrackSystemAdminSession(selTeam);
         campatrackApplyLoginSuccessToStorage(sessionUser);
         await finishOk(sessionUser);
         return;
@@ -14785,44 +15035,75 @@ function initCampatrackLogin() {
       const res = await fetch(API_LOGIN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: u, password: p }),
+        body: JSON.stringify({ username: u, password: p, teamId: selTeam }),
       });
       const body =
         res.headers.get("content-type")?.includes("application/json")
           ? await res.json()
           : null;
-      if (res.ok && body?.success && body.user) {
-        const apiUser = { ...body.user };
-        if (apiUser.id == null || String(apiUser.id).trim() === "") {
-          apiUser.id = String(apiUser.username ?? "").trim();
+      if (!res.ok || !body?.success || !body.user) {
+        const msg =
+          typeof body?.message === "string" && body.message.trim()
+            ? body.message.trim()
+            : res.status === 403
+              ? "No tienes acceso a este equipo"
+              : "Credenciales incorrectas";
+        if (err) {
+          err.textContent = msg;
+          err.classList.remove("hidden");
         }
-        apiUser.teamId = resolveCampatrackTeamId(apiUser.teamId);
-        if (!String(apiUser.teamId || "").trim()) apiUser.teamId = TEAM_GENERAL_ID;
-        apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
-        if (body.user.permissions && typeof body.user.permissions === "object" && !Array.isArray(body.user.permissions)) {
-          apiUser.permissions = body.user.permissions;
-        }
-        campatrackApplyLoginSuccessToStorage(apiUser);
-        await finishOk(apiUser);
         return;
       }
-      const local = await tryLocalCampatrackLogin(u, p);
-      if (local.ok && local.record) {
-        const sessionUser = buildCampatrackLocalSessionFromRecord(local.record);
-        campatrackApplyLoginSuccessToStorage(sessionUser);
-        await finishOk(sessionUser);
+      const apiUser = { ...body.user };
+      if (apiUser.id == null || String(apiUser.id).trim() === "") {
+        apiUser.id = String(apiUser.username ?? "").trim();
+      }
+      if (typeof apiUser.nombre === "string") apiUser.nombre = apiUser.nombre.trim();
+      if (typeof apiUser.apellido === "string") apiUser.apellido = apiUser.apellido.trim();
+      if (typeof apiUser.cargo === "string") apiUser.cargo = apiUser.cargo.trim();
+      if (typeof apiUser.foto === "string") {
+        apiUser.foto = normalizeCampatrackUserFotoValue(apiUser.foto);
+      } else {
+        delete apiUser.foto;
+      }
+      if (Array.isArray(apiUser.modulos) && apiUser.modulos.length > 0) {
+        apiUser.permisosModulos = normalizeCampatrackUserModulos(apiUser.modulos);
+        apiUser.campatrackLocalProfile = true;
+        delete apiUser.modulos;
+      }
+      let membership = Array.isArray(apiUser.teams)
+        ? [
+            ...new Set(
+              apiUser.teams.map((x) => String(x || "").trim()).filter(campatrackIsCanonTeamId)
+            )
+          ]
+        : [];
+      if (!membership.length)
+        membership = campatrackNormalizeTeamsFromDraftRecord({ teamId: apiUser.teamId });
+      apiUser.teams = membership;
+      const tid = resolveCampatrackTeamId(String(apiUser.teamId || "").trim()) || String(apiUser.teamId || "").trim();
+      apiUser.teamId = tid;
+      if (!campatrackIsCanonTeamId(apiUser.teamId)) {
+        if (err) {
+          err.textContent = "Sesión sin equipo válido.";
+          err.classList.remove("hidden");
+        }
         return;
       }
-      err?.classList.remove("hidden");
+      apiUser.teamNombre = resolveCampatrackTeamNombre(apiUser.teamId);
+      if (body.user.permissions && typeof body.user.permissions === "object" && !Array.isArray(body.user.permissions)) {
+        const q = body.user.permissions;
+        apiUser.permissions = {
+          canExport: q.canExport === true,
+          canImport: q.canImport === true,
+          canReset: q.canReset === true
+        };
+      }
+      campatrackApplyLoginSuccessToStorage(apiUser);
+      await finishOk(apiUser);
+      return;
     } catch (fetchErr) {
       console.warn("Login API", fetchErr);
-      const local = await tryLocalCampatrackLogin(u, p);
-      if (local.ok && local.record) {
-        const sessionUser = buildCampatrackLocalSessionFromRecord(local.record);
-        campatrackApplyLoginSuccessToStorage(sessionUser);
-        await finishOk(sessionUser);
-        return;
-      }
       err?.classList.remove("hidden");
     } finally {
       if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = false;
@@ -14889,8 +15170,6 @@ function initTabs() {
     const canAccessAdsReport = visibility.has("ads-report");
     const canAccessUsuarios = roleTabs.has("usuarios");
     const canAccessAuditoria = visibility.has("auditoria");
-    const importUrlBtn = document.getElementById("btn-importar-url");
-
     tabCentroCostos.classList.toggle("hidden", !canAccessCostos);
     tabPlanning.classList.toggle("hidden", !canAccessPlanning);
     tabBitacora.classList.toggle("hidden", !canAccessBitacora);
@@ -14902,11 +15181,6 @@ function initTabs() {
     tabUsuarios.classList.toggle("hidden", !canAccessUsuarios);
     tabAuditoria.classList.toggle("hidden", !canAccessAuditoria);
     mountCampatrackSidebarFooterTools();
-    if (importUrlBtn) {
-      const u = typeof getUser === "function" ? getUser() : null;
-      const canImportUrl = u ? resolveCampatrackSessionPermissions(u).canImport : false;
-      importUrlBtn.classList.toggle("hidden", !canImportUrl);
-    }
   };
 
   window.campatrackRefreshModuleNav = () => {
@@ -14966,7 +15240,18 @@ function initTabs() {
     if (safeModule === "dashboard") {
       renderDashboard();
       scheduleDashEndingSoonAlert();
-      void cargarDataDesdeBackend();
+      let skipRedundantBackendFetch = false;
+      try {
+        if (sessionStorage.getItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH) === "1") {
+          sessionStorage.removeItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH);
+          skipRedundantBackendFetch = true;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      if (!skipRedundantBackendFetch) {
+        void cargarDataDesdeBackend();
+      }
     } else if (dashEndingSoonAlertTimer != null) {
       clearTimeout(dashEndingSoonAlertTimer);
       dashEndingSoonAlertTimer = null;
@@ -15179,7 +15464,6 @@ function initCampatrackSidebarCollapsedTooltips() {
   }
 }
 
-restaurarCampatrackSessionDesdeBrowserStorage();
 bootstrapCampatrackAuthShell();
 hydratarDesdeLocalStorage();
 ensureCampatrackTeamsSeed();
@@ -15217,18 +15501,15 @@ if (Array.isArray(modeloAnalitico) && modeloAnalitico.length > 0) {
   refreshSegmentadoresValues();
   refreshMedidasFiltros();
 } else {
-  REGENERAR_MODELO();
+  withDraftNotificationsSuppressed(() => REGENERAR_MODELO());
 }
 if (!document.getElementById("dashboardModule")?.classList.contains("hidden")) {
   renderDashboard();
 }
 
-captureAppPublishBaseline();
-appPendingPublishCount = 0;
-resetAppStatePendingChanges();
 appDeferredDiskPersistence = true;
 initDraftPublishToolbar();
-updatePublishDraftToolbar();
+resetPublishDraftAfterServerHydrate();
 
 export {
   accumulatePlanningPeriodMetaFromMonthly,

@@ -34,7 +34,7 @@ export function ensurePlanningDraftShape() {
   return p;
 }
 
-/** Filas DATA → General (todas las equipos con `teamId`); misma idea que `planning.records`. */
+/** Filas DATA → General (cada fila con `teamId` para filtrar por equipo de sesión); misma idea que `planning.records`. */
 export function ensureDataGeneralDraftShape() {
   if (!appState.dataDraft || typeof appState.dataDraft !== "object") appState.dataDraft = {};
   if (!Array.isArray(appState.dataDraft.data_general)) appState.dataDraft.data_general = [];
@@ -202,12 +202,21 @@ export async function initAppState(options = {}) {
     hydrateAppStateDraftFromApiBundle(prefetched);
     return;
   }
-  const userId = options.userId != null ? String(options.userId).trim() : "";
-  if (!userId) {
-    console.warn("initAppState: falta userId");
+  const partitionKey =
+    options.partitionKey != null
+      ? String(options.partitionKey).trim()
+      : options.teamId != null
+        ? String(options.teamId).trim()
+        : options.userId != null
+          ? String(options.userId).trim()
+          : "";
+  if (!partitionKey) {
+    console.warn("initAppState: falta partitionKey, teamId o userId");
     return;
   }
-  const res = await fetch(`${apiOrigin()}/api/data?user_id=${encodeURIComponent(userId)}`);
+  const res = await fetch(
+    `${apiOrigin()}/api/data?team_id=${encodeURIComponent(partitionKey)}`
+  );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const row = await res.json();
   if (!row || typeof row !== "object" || row.data == null) {

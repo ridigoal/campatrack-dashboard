@@ -76,6 +76,10 @@ body {
   line-height: 0;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  display: inline-grid;
+  place-items: center;
+  min-width: 56px;
+  min-height: 56px;
 }
 
 .app-profile-avatar-btn:hover {
@@ -89,15 +93,32 @@ body {
 }
 
 .app-profile-avatar {
-  display: block;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 56px;
   height: 56px;
   min-width: 56px;
   min-height: 56px;
   border-radius: 50%;
-  object-fit: cover;
   border: 3px solid #fff;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+
+.app-profile-avatar.app-profile-avatar--photo {
+  display: block;
+  object-fit: cover;
+}
+
+.app-profile-avatar.app-profile-avatar--letter {
+  flex-shrink: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #111827;
+  background: #ff9800;
+  user-select: none;
 }
 
 .app-profile-meta {
@@ -6293,6 +6314,24 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   outline: none;
 }
 
+.campatrack-login-select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #64748b 50%),
+    linear-gradient(135deg, #64748b 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+  padding-right: 36px !important;
+}
+
+.dark-mode .campatrack-login-select,
+body.dark-mode .campatrack-login-select {
+  color: #e2e8f0;
+  background-image: linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+}
+
 .campatrack-login-pass-toggle {
   flex-shrink: 0;
   width: 44px;
@@ -6324,6 +6363,10 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   gap: 12px;
   flex-wrap: wrap;
   margin-top: -4px;
+}
+
+.campatrack-login-row-meta--end {
+  justify-content: flex-end;
 }
 
 .campatrack-login-check {
@@ -6912,6 +6955,13 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
   gap: 8px;
 }
 
+#mainAppShell:has(#dashboardModule:not(.hidden)) .app-profile-avatar-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
 #mainAppShell:has(#dashboardModule:not(.hidden)) .app-profile-avatar {
   width: 44px;
   height: 44px;
@@ -7323,15 +7373,63 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
 #mainAppShell .users-photo-preview-wrap {
   margin-top: 12px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 #mainAppShell .users-photo-preview {
+  flex-shrink: 0;
+}
+
+#mainAppShell .users-photo-preview--img {
   border-radius: 12px;
   object-fit: cover;
   border: 1px solid var(--line);
+}
+
+#mainAppShell .users-photo-preview--letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  font-size: 2.75rem;
+  font-weight: 750;
+  line-height: 1;
+  color: #111827;
+  background: #ff9800;
+  border: none;
+}
+
+#mainAppShell .users-toolbar-perms-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#mainAppShell .users-toolbar-perms-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+#mainAppShell .users-toolbar-perm-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+#mainAppShell .users-toolbar-perm-item .users-perm-checkbox {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--primary);
 }
 
 #mainAppShell .users-fields-col {
@@ -7383,6 +7481,37 @@ body.dark-mode #costCenterModule .cc-analytic-table-scroll .cc-planning-summary 
 #mainAppShell .users-field-hint {
   font-size: 0.75rem;
   color: #64748b;
+}
+
+#mainAppShell .users-teams-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-inline-size: unset;
+}
+
+#mainAppShell .users-teams-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+#mainAppShell .users-team-chk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+#mainAppShell .users-team-chk-row input.users-team-chk {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 #mainAppShell .users-field-error {
@@ -13319,6 +13448,13 @@ body.dark-mode #mainAppShell .app-publish-progress {
   padding: 0;
 }
 
+.campatrack-top-header-end .app-profile-avatar-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
 .campatrack-top-header-end .app-profile-avatar {
   width: 40px;
   height: 40px;
@@ -13445,10 +13581,25 @@ body.dark-mode #mainAppShell .app-publish-progress {
   color: #334155;
 }
 
-#mainAppShell .users-list-avatar {
+#mainAppShell .users-list-avatar.users-list-avatar--img {
   border-radius: 10px;
   object-fit: cover;
   border: 1px solid #e2e8f0;
+}
+
+#mainAppShell .users-list-avatar.users-list-avatar--letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: 750;
+  line-height: 1;
+  color: #111827;
+  background: #ff9800;
+  flex-shrink: 0;
 }
 
 #mainAppShell .users-list-empty {
@@ -13768,89 +13919,6 @@ body.dark-mode .campatrack-toast--success {
 body.dark-mode .campatrack-toast--error {
   background: rgba(127, 29, 29, 0.45);
   color: #fecaca;
-}
-
-/* Carga tras login */
-.campatrack-login-loading-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100003;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(2px);
-}
-
-.campatrack-login-loading-overlay.hidden {
-  display: none !important;
-}
-
-.campatrack-login-loading-card {
-  min-width: min(22rem, calc(100vw - 2rem));
-  padding: 1.5rem 1.75rem;
-  border-radius: 0.75rem;
-  background: #fff;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  text-align: center;
-}
-
-body.dark-mode .campatrack-login-loading-card {
-  background: #1e293b;
-  border-color: rgba(148, 163, 184, 0.3);
-}
-
-.campatrack-login-loading-spinner {
-  width: 2.25rem;
-  height: 2.25rem;
-  margin: 0 auto 1rem;
-  border: 3px solid rgba(99, 102, 241, 0.25);
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: campatrack-login-spin 0.75s linear infinite;
-}
-
-@keyframes campatrack-login-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.campatrack-login-loading-text {
-  margin: 0 0 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-body.dark-mode .campatrack-login-loading-text {
-  color: #f1f5f9;
-}
-
-.campatrack-login-loading-bar {
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.35);
-  overflow: hidden;
-}
-
-.campatrack-login-loading-bar-fill {
-  display: block;
-  height: 100%;
-  width: 35%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  animation: campatrack-login-bar-slide 1.2s ease-in-out infinite;
-}
-
-@keyframes campatrack-login-bar-slide {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(320%);
-  }
 }
 
 #mainAppShell .campatrack-sidebar-tool-btns {
