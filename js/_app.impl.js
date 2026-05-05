@@ -112,8 +112,6 @@ const bitacoraTimelineList = document.getElementById("bitacoraTimelineList");
 const bitacoraFiltroTipoSelect = document.getElementById("bitacoraFiltroTipo");
 const bitacoraFiltroProgramaInput = document.getElementById("bitacoraFiltroPrograma");
 const bitacoraFechaRangoInput = document.getElementById("bitacoraFechaRango");
-const bitacoraAplicarRangoBtn = document.getElementById("bitacoraAplicarRangoBtn");
-const bitacoraBusquedaInput = document.getElementById("bitacoraBusquedaInput");
 const bitacoraLimpiarFiltrosBtn = document.getElementById("bitacoraLimpiarFiltrosBtn");
 const bitacoraExportBtn = document.getElementById("bitacoraExportBtn");
 const bitacoraOrdenSelect = document.getElementById("bitacoraOrdenSelect");
@@ -151,8 +149,7 @@ const bitacoraFiltros = {
   tipo: "",
   programa: "",
   fechaInicio: "",
-  fechaFin: "",
-  busqueda: ""
+  fechaFin: ""
 };
 const BITACORA_CAMBIOS_MAX = 1000;
 
@@ -2848,12 +2845,6 @@ function buildRecordRow(record) {
   const { monthlyInvestment, monthlyLeads, monthlyCpl } = computeMonthlyArraysForRecordWithOverrides(record, year);
   const monthlyDays = countDaysByMonthForRangeInYear(record.fechaInicio, record.fechaFin, year);
   const t = (s) => escapeHtml(String(s ?? ""));
-  const estadoRow = planningEstadoCampana(record);
-  const estadoBadge = `<span class="${planningEstadoBadgeClass(estadoRow)}">${t(estadoRow)}</span>`;
-  const subParts = [];
-  if (String(record.intake || "").trim()) subParts.push(t(record.intake));
-  if (String(record.tipo || "").trim()) subParts.push(t(record.tipo));
-  const subLine = subParts.join(" · ");
   const row = document.createElement("tr");
   row.setAttribute("data-record-id", rid);
   const metas = record.metas || {};
@@ -2866,20 +2857,20 @@ function buildRecordRow(record) {
         else cellText = String(raw);
       }
       const cls = idx === 4 ? "group-end" : "";
-      return `<td class="${cls} planning-meta-cell" data-meta-key="${key}" data-record-id="${rid}">${t(cellText)}</td>`;
+      return `<td class="${cls} planning-meta-cell planning-cell-dbl-editable" data-meta-key="${key}" data-record-id="${rid}">${t(cellText)}</td>`;
     })
     .join("");
   const mxInv = monthlyInvestment.reduce((a, v) => Math.max(a, Number(v) || 0), 0);
   const mxLead = monthlyLeads.reduce((a, v) => Math.max(a, Math.round(Number(v) || 0)), 0);
   const mxCpl = monthlyCpl.reduce((a, v) => Math.max(a, Number(v) || 0), 0);
   const configCells = `
-    <td class="planning-body-cell planning-cell-intake" data-planning-edit="intake" data-record-id="${rid}">${t(record.intake)}</td>
-    <td class="planning-body-cell" data-planning-edit="fechaInicio" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaInicio))}</td>
-    <td class="planning-body-cell" data-planning-edit="fechaFin" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaFin))}</td>
-    <td class="planning-body-cell planning-cell-plat" data-planning-edit="plataforma" data-record-id="${rid}">${planningPlataformaCellHtml(record.plataforma)}</td>
-    <td class="planning-body-cell planning-cell-tracking" data-planning-edit="tracking" data-record-id="${rid}"><span class="planning-tracking-label">${t(record.tracking)}</span></td>
-    <td class="planning-body-cell planning-presupuesto-cell" data-planning-edit="presupuesto" data-record-id="${rid}"><span class="planning-presupuesto-val">${escapeHtml(formatMoney(record.presupuesto) || "")}</span></td>
-    <td class="group-end planning-body-cell planning-leads-total-cell" data-planning-edit="leads" data-record-id="${rid}"><span class="planning-leads-total-chip">${t(record.leads)}</span></td>
+    <td class="planning-body-cell planning-cell-intake planning-cell-readonly" data-record-id="${rid}">${t(record.intake)}</td>
+    <td class="planning-body-cell planning-cell-dbl-editable" data-planning-edit="fechaInicio" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaInicio))}</td>
+    <td class="planning-body-cell planning-cell-dbl-editable" data-planning-edit="fechaFin" data-record-id="${rid}">${t(formatDateDdMmm(record.fechaFin))}</td>
+    <td class="planning-body-cell planning-cell-plat planning-cell-readonly" data-record-id="${rid}">${planningPlataformaCellHtml(record.plataforma)}</td>
+    <td class="planning-body-cell planning-cell-tracking planning-cell-readonly" data-record-id="${rid}"><span class="planning-tracking-label">${t(record.tracking)}</span></td>
+    <td class="planning-body-cell planning-presupuesto-cell planning-cell-readonly" data-record-id="${rid}"><span class="planning-presupuesto-val">${escapeHtml(formatMoney(record.presupuesto) || "")}</span></td>
+    <td class="group-end planning-body-cell planning-leads-total-cell planning-cell-readonly" data-record-id="${rid}"><span class="planning-leads-total-chip">${t(record.leads)}</span></td>
   `;
   const invCells = Array.from({ length: 12 }, (_, i) => {
     const cls = i === 11 ? "group-end" : "";
@@ -2887,7 +2878,7 @@ function buildRecordRow(record) {
     const v = monthlyInvestment[i];
     const tier = planningPillTier(v, mxInv);
     const inner = escapeHtml(formatMoney(v) || "");
-    return `<td class="${cls} planning-cell-mes-inv" data-mcol-inv="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-inv ${tier}">${inner}</span></td>`;
+    return `<td class="${cls} planning-cell-mes-inv planning-cell-dbl-editable" data-mcol-inv="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-inv ${tier}">${inner}</span></td>`;
   }).join("");
   const leadCells = monthlyLeads
     .map((n, i) => {
@@ -2895,7 +2886,7 @@ function buildRecordRow(record) {
       if (monthlyDays[i] === 0) return `<td class="${cls} planning-mes-muted"></td>`;
       const rn = Math.round(Number(n) || 0);
       const tier = planningPillTier(rn, mxLead);
-      return `<td class="${cls} planning-cell-mes-lead" data-mcol-lead="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-lead ${tier}">${t(String(rn))}</span></td>`;
+      return `<td class="${cls} planning-cell-mes-lead planning-cell-dbl-editable" data-mcol-lead="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-lead ${tier}">${t(String(rn))}</span></td>`;
     })
     .join("");
   const cplCells = monthlyCpl
@@ -2904,19 +2895,13 @@ function buildRecordRow(record) {
       if (monthlyDays[i] <= 0) return `<td class="${cls} planning-mes-muted"></td>`;
       const inner = n > 0 ? escapeHtml(formatCpl(n) || "") : "";
       const tier = n > 0 ? planningPillTier(n, mxCpl) : "planning-pill-tier--ghost";
-      return `<td class="${cls} planning-cell-mes-cpl" data-mcol-cpl="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-cpl ${tier}">${inner}</span></td>`;
+      return `<td class="${cls} planning-cell-mes-cpl planning-cell-readonly" data-mcol-cpl="${i}" data-record-id="${rid}"><span class="planning-pill planning-pill-cpl ${tier}">${inner}</span></td>`;
     })
     .join("");
   row.innerHTML = `
-    <td class="sticky-col-tipo planning-sticky-tipo" data-planning-edit="tipo" data-record-id="${rid}"><span class="${planningTipoBadgeClassFromTipo(record.tipo)}">${t(record.tipo)}</span></td>
-    <td class="sticky-col-program group-end planning-sticky-program" data-planning-edit="programa" data-record-id="${rid}">
-      <div class="planning-campaign-cell">
-        <strong class="planning-campaign-name">${t(record.programa)}</strong>
-        <div class="planning-campaign-meta">
-          <span class="planning-campaign-sub">${subLine || "—"}</span>
-          ${estadoBadge}
-        </div>
-      </div>
+    <td class="sticky-col-tipo planning-sticky-tipo planning-cell-readonly" data-record-id="${rid}"><span class="${planningTipoBadgeClassFromTipo(record.tipo)}">${t(record.tipo)}</span></td>
+    <td class="sticky-col-program group-end planning-sticky-program planning-cell-readonly" data-record-id="${rid}">
+      <span class="planning-campaign-name planning-campaign-name--only">${t(record.programa)}</span>
     </td>
     ${metaCells}
     ${configCells}
@@ -3239,17 +3224,121 @@ function updateActionButtons() {
   if (deleteRecordBtn) deleteRecordBtn.disabled = !has;
 }
 
+const PLANNING_GROUP_TONE_COUNT = 6;
+const PLANNING_GROUP_TONE_CLASS_PREFIX = "planning-row-group-tone-";
+
+function measurePlanningCellIntrinsicWidth(cell) {
+  if (!(cell instanceof HTMLElement)) return 0;
+  const cs = window.getComputedStyle(cell);
+  const clone = cell.cloneNode(true);
+  clone.style.cssText = [
+    "position:absolute",
+    "left:-99999px",
+    "top:0",
+    "visibility:hidden",
+    "pointer-events:none",
+    "display:table-cell",
+    `vertical-align:${cs.verticalAlign}`,
+    "width:auto!important",
+    "max-width:none!important",
+    "min-width:0!important",
+    `padding:${cs.padding}`,
+    `font-size:${cs.fontSize}`,
+    `font-weight:${cs.fontWeight}`,
+    `font-family:${cs.fontFamily}`,
+    `letter-spacing:${cs.letterSpacing}`,
+    "box-sizing:border-box",
+    "white-space:nowrap",
+    `border:${cs.border}`,
+  ].join(";");
+  clone.querySelectorAll("*").forEach((el) => {
+    if (!(el instanceof HTMLElement)) return;
+    el.style.maxWidth = "none";
+    el.style.overflow = "visible";
+    el.style.textOverflow = "clip";
+    el.style.whiteSpace = "nowrap";
+  });
+  document.body.appendChild(clone);
+  const w = clone.getBoundingClientRect().width;
+  document.body.removeChild(clone);
+  return Number.isFinite(w) ? w : 0;
+}
+
+function refreshPlanningStickyColumnWidths() {
+  const mod = document.getElementById("planningModule");
+  const table = planningBody?.closest("table");
+  if (!mod?.classList.contains("plan-module-saas") || !table || !planningBody) return;
+
+  let maxTipo = 0;
+  table.querySelectorAll("thead th.sticky-col-tipo, tbody td.planning-sticky-tipo").forEach((cell) => {
+    maxTipo = Math.max(maxTipo, measurePlanningCellIntrinsicWidth(cell));
+  });
+  let maxProg = 0;
+  table.querySelectorAll("thead th.sticky-col-program, tbody td.sticky-col-program").forEach((cell) => {
+    maxProg = Math.max(maxProg, measurePlanningCellIntrinsicWidth(cell));
+  });
+
+  const minTipo = 48;
+  const minProg = 88;
+  const capTipo = 260;
+  const capProg = 520;
+  const wTipo = Math.min(capTipo, Math.max(minTipo, Math.ceil(maxTipo + 6)));
+  const wProg = Math.min(capProg, Math.max(minProg, Math.ceil(maxProg + 8)));
+
+  mod.style.setProperty("--plan-sticky-tipo-w", `${wTipo}px`);
+  mod.style.setProperty("--plan-sticky-program-w", `${wProg}px`);
+}
+
+function scheduleRefreshPlanningStickyColumnWidths() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(refreshPlanningStickyColumnWidths);
+  });
+}
+
+function refreshPlanningProgramGroupBands() {
+  if (!planningBody) return;
+  const records = getFilteredRecords();
+  const idToProg = new Map(records.map((r) => [String(r.id), String(r.programa ?? "").trim()]));
+  const rows = [...planningBody.querySelectorAll("tr[data-record-id]")];
+  let prevKey = null;
+  let groupCounter = -1;
+  rows.forEach((tr) => {
+    const id = tr.getAttribute("data-record-id");
+    const key = idToProg.get(String(id)) ?? "";
+    if (prevKey !== key) {
+      groupCounter++;
+      prevKey = key;
+    }
+    const toneIx = groupCounter % PLANNING_GROUP_TONE_COUNT;
+    for (let k = 0; k < PLANNING_GROUP_TONE_COUNT; k += 1) {
+      tr.classList.remove(`${PLANNING_GROUP_TONE_CLASS_PREFIX}${k}`);
+    }
+    tr.classList.remove("planning-row-group-soft", "planning-row-group-base");
+    tr.classList.add(`${PLANNING_GROUP_TONE_CLASS_PREFIX}${toneIx}`);
+  });
+}
+
 function rebuildPlanningTable() {
   if (!planningBody) return;
   console.log("Estado actual planning:", appState.dataDraft.planning.records);
   planningBody.innerHTML = "";
   updateFilterProgramaState();
   syncSelectionToFilter();
+  let planningSelectionMarked = false;
   getFilteredRecords().forEach((record) => {
     const row = buildRecordRow(record);
-    if (samePlanningRecordId(record.id, selectedRecordId)) row.classList.add("row-selected");
+    if (
+      selectedRecordId != null &&
+      !planningSelectionMarked &&
+      samePlanningRecordId(record.id, selectedRecordId)
+    ) {
+      row.classList.add("row-selected");
+      planningSelectionMarked = true;
+    }
     planningBody.appendChild(row);
   });
+  refreshPlanningProgramGroupBands();
+  scheduleRefreshPlanningStickyColumnWidths();
   updateTotalInversion();
   updateActionButtons();
 }
@@ -3267,6 +3356,8 @@ function replacePlanningRowElement(record) {
   const newRow = buildRecordRow(record);
   if (samePlanningRecordId(record.id, selectedRecordId)) newRow.classList.add("row-selected");
   oldRow.replaceWith(newRow);
+  refreshPlanningProgramGroupBands();
+  scheduleRefreshPlanningStickyColumnWidths();
   updateTotalInversion();
   updateActionButtons();
 }
@@ -4668,8 +4759,9 @@ planningBody?.addEventListener("click", (event) => {
   } else {
     selectedRecordId = idAttr;
     planningBody.querySelectorAll("tr[data-record-id]").forEach((row) => {
-      row.classList.toggle("row-selected", samePlanningRecordId(row.getAttribute("data-record-id"), idAttr));
+      row.classList.remove("row-selected");
     });
+    tr.classList.add("row-selected");
   }
   updateActionButtons();
 });
@@ -4695,6 +4787,19 @@ document.getElementById("filterEstadoPlanning")?.addEventListener("change", () =
 document.getElementById("planningToolbarSearch")?.addEventListener("input", () => {
   rebuildPlanningTable();
 });
+
+let planningStickyWidthsResizeT = 0;
+window.addEventListener(
+  "resize",
+  () => {
+    window.clearTimeout(planningStickyWidthsResizeT);
+    planningStickyWidthsResizeT = window.setTimeout(() => {
+      const pm = document.getElementById("planningModule");
+      if (!pm?.classList.contains("hidden")) refreshPlanningStickyColumnWidths();
+    }, 120);
+  },
+  { passive: true }
+);
 
 document.getElementById("planningFiltrosAvanzadosBtn")?.addEventListener("click", () => {
   const panel = document.getElementById("planningAdvFiltersPanel");
@@ -4797,25 +4902,6 @@ planningBody?.addEventListener("dblclick", (event) => {
     return;
   }
 
-  if (td.hasAttribute("data-mcol-cpl")) {
-    const monthIdx = Number(td.getAttribute("data-mcol-cpl") || "");
-    if (!Number.isFinite(monthIdx)) return;
-    const input = document.createElement("input");
-    input.type = "number";
-    input.step = "any";
-    input.min = "0";
-    input.value = td.textContent?.trim().replace(/[$,\s]/g, "") || "";
-    input.className = "meta-input planning-inline-input";
-    td.textContent = "";
-    td.appendChild(input);
-    input.focus();
-    input.select();
-    bindNumericCommit(input, (rec, raw) => setPlanningMonthlyCplFromCell(rec, monthIdx, raw), {
-      planningRowRefreshRecord: record
-    });
-    return;
-  }
-
   const metaKey = td.dataset.metaKey;
   if (metaKey && META_FIELDS.includes(metaKey)) {
     let currentValue = td.textContent?.trim().replace(/^\$/, "") || "";
@@ -4856,6 +4942,27 @@ planningBody?.addEventListener("dblclick", (event) => {
     const commit = () => {
       if (aborted) return;
       const v = input.value.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        rebuildPlanningTable();
+        return;
+      }
+      const live =
+        planningDraftRecords().find((r) => samePlanningRecordId(r?.id, recordIdRaw)) ?? record;
+      const nextStart =
+        field === "fechaInicio" ? v : normalizeDateValueForInput(live.fechaInicio ?? "");
+      const nextEnd =
+        field === "fechaFin" ? v : normalizeDateValueForInput(live.fechaFin ?? "");
+      if (
+        nextStart &&
+        nextEnd &&
+        /^\d{4}-\d{2}-\d{2}$/.test(nextStart) &&
+        /^\d{4}-\d{2}-\d{2}$/.test(nextEnd) &&
+        nextEnd < nextStart
+      ) {
+        showCampatrackToast("La fecha Fin no puede ser anterior a la fecha Inicio.", "error");
+        rebuildPlanningTable();
+        return;
+      }
       commitPlanningRecordById((rec) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
         if (field === "fechaInicio") rec.fechaInicio = v;
@@ -4877,57 +4984,8 @@ planningBody?.addEventListener("dblclick", (event) => {
     return;
   }
 
-  if (field === "presupuesto" || field === "leads") {
-    const input = document.createElement("input");
-    input.type = "number";
-    input.step = field === "leads" ? "1" : "any";
-    input.min = "0";
-    input.value = td.textContent?.trim().replace(/[$,\s]/g, "") || "";
-    input.className = "meta-input planning-inline-input";
-    td.textContent = "";
-    td.appendChild(input);
-    input.focus();
-    input.select();
-    bindNumericCommit(
-      input,
-      (rec, raw) => {
-        if (field === "presupuesto") applyPlanningPresupuestoTotalFromCell(rec, raw);
-        else applyPlanningLeadsTotalFromCell(rec, raw);
-      },
-      { planningRowRefreshRecord: record }
-    );
-    return;
-  }
-
-  if (field === "tipo" || field === "programa" || field === "intake" || field === "plataforma" || field === "tracking") {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "planning-inline-input";
-    input.value = String(record[field] ?? "");
-    td.textContent = "";
-    td.appendChild(input);
-    input.focus();
-    input.select();
-    let aborted = false;
-    const commit = () => {
-      if (aborted) return;
-      commitPlanningRecordById((rec) => {
-        rec[field] = String(input.value ?? "").trim();
-      });
-    };
-    input.addEventListener("blur", commit, { once: true });
-    input.addEventListener("change", commit);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        input.blur();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        aborted = true;
-        rebuildPlanningTable();
-      }
-    });
-  }
+  // Presupuesto total, leads total, CPL mensual, tipo/programa/intake/plataforma/tracking:
+  // no edición en tabla (solo cálculo / otros flujos).
 });
 
 hydratarProgramas();
@@ -5124,22 +5182,6 @@ function bitacoraRowPasaFiltros(row) {
     const end = parseDateInput(bitacoraFiltros.fechaFin);
     if (!fecha || !end || fecha > end) return false;
   }
-  const qb = String(bitacoraFiltros.busqueda || "")
-    .trim()
-    .toLowerCase();
-  if (qb) {
-    const hay = [
-      bitacoraDisplayTitulo(row),
-      row?.programa,
-      row?.tipo,
-      row?.cambios,
-      row?.observaciones,
-      bitacoraImpactoLabel(row?.impacto)
-    ]
-      .map((x) => String(x || "").toLowerCase())
-      .some((t) => t.includes(qb));
-    if (!hay) return false;
-  }
   return true;
 }
 
@@ -5160,6 +5202,21 @@ function initBitacoraDateRangePicker() {
   if (bitacoraFechaRangoPicker) return;
   const localeEs =
     (flatpickr.l10ns && (flatpickr.l10ns.es || flatpickr.l10ns.es_default)) || "es";
+  const applyBitacoraDateRangeFilter = () => {
+    if (!bitacoraFechaRangoPicker) return;
+    if (bitacoraFechaRangoPicker.selectedDates.length >= 2) {
+      const [a, b] = bitacoraFechaRangoPicker.selectedDates;
+      const start = a <= b ? a : b;
+      const end = a <= b ? b : a;
+      bitacoraFiltros.fechaInicio = formatDateInputFromDate(start);
+      bitacoraFiltros.fechaFin = formatDateInputFromDate(end);
+    } else {
+      bitacoraFiltros.fechaInicio = "";
+      bitacoraFiltros.fechaFin = "";
+    }
+    bitacoraPageIndex = 1;
+    renderBitacoraTable();
+  };
   bitacoraFechaRangoPicker = flatpickr(bitacoraFechaRangoInput, {
     mode: "range",
     dateFormat: "Y-m-d",
@@ -5168,7 +5225,11 @@ function initBitacoraDateRangePicker() {
     clickOpens: true,
     conjunction: " → ",
     altInput: true,
-    altFormat: "d M Y"
+    altFormat: "d M Y",
+    onClose: applyBitacoraDateRangeFilter,
+    onChange(selectedDates) {
+      if (selectedDates.length >= 2) applyBitacoraDateRangeFilter();
+    }
   });
 }
 
@@ -5508,7 +5569,6 @@ function initBitacoraModule() {
   hydratarBitacoraData();
   initBitacoraDateRangePicker();
   if (bitacoraFiltroProgramaInput) bitacoraFiltroProgramaInput.value = bitacoraFiltros.programa;
-  if (bitacoraBusquedaInput) bitacoraBusquedaInput.value = bitacoraFiltros.busqueda;
   if (bitacoraFechaRangoPicker && bitacoraFiltros.fechaInicio && bitacoraFiltros.fechaFin) {
     bitacoraFechaRangoPicker.setDate([bitacoraFiltros.fechaInicio, bitacoraFiltros.fechaFin], true, "Y-m-d");
   } else if (bitacoraFechaRangoInput) {
@@ -5551,21 +5611,13 @@ function initBitacoraModule() {
     renderBitacoraTable();
   });
 
-  bitacoraBusquedaInput?.addEventListener("input", (event) => {
-    bitacoraFiltros.busqueda = event.target instanceof HTMLInputElement ? event.target.value : "";
-    bitacoraPageIndex = 1;
-    renderBitacoraTable();
-  });
-
   bitacoraLimpiarFiltrosBtn?.addEventListener("click", () => {
     bitacoraFiltros.tipo = "";
     bitacoraFiltros.programa = "";
     bitacoraFiltros.fechaInicio = "";
     bitacoraFiltros.fechaFin = "";
-    bitacoraFiltros.busqueda = "";
     if (bitacoraFiltroTipoSelect instanceof HTMLSelectElement) bitacoraFiltroTipoSelect.value = "";
     if (bitacoraFiltroProgramaInput instanceof HTMLInputElement) bitacoraFiltroProgramaInput.value = "";
-    if (bitacoraBusquedaInput instanceof HTMLInputElement) bitacoraBusquedaInput.value = "";
     if (bitacoraFechaRangoPicker) bitacoraFechaRangoPicker.clear();
     else if (bitacoraFechaRangoInput) bitacoraFechaRangoInput.value = "";
     bitacoraPageIndex = 1;
@@ -5592,23 +5644,6 @@ function initBitacoraModule() {
 
   bitacoraFiltroTipoSelect?.addEventListener("change", (event) => {
     bitacoraFiltros.tipo = event.target instanceof HTMLSelectElement ? event.target.value : "";
-    bitacoraPageIndex = 1;
-    renderBitacoraTable();
-  });
-
-  bitacoraAplicarRangoBtn?.addEventListener("click", () => {
-    const parsed = parseBitacoraRangeInputValue(bitacoraFechaRangoInput?.value || "");
-    bitacoraFiltros.fechaInicio = parsed.start;
-    bitacoraFiltros.fechaFin = parsed.end;
-    if (bitacoraFechaRangoPicker) {
-      if (parsed.start && parsed.end) {
-        bitacoraFechaRangoPicker.setDate([parsed.start, parsed.end], true, "Y-m-d");
-      } else {
-        bitacoraFechaRangoPicker.clear();
-      }
-    } else if (bitacoraFechaRangoInput) {
-      bitacoraFechaRangoInput.value = formatBitacoraRangeInputValue(parsed.start, parsed.end);
-    }
     bitacoraPageIndex = 1;
     renderBitacoraTable();
   });
@@ -9635,6 +9670,15 @@ function renderRelacionesEstado() {
   relSetTrendLine("relKpiTrendData", b.totalData, totalData, {});
 }
 
+function refreshRelVincularCampaniasButton() {
+  const btn = document.getElementById("relVincularCampaniasBtn");
+  if (!btn || !(btn instanceof HTMLButtonElement)) return;
+  const ready = selectedPlanningKeys.size === 1 && selectedDataCampaignKeys.size === 1;
+  btn.disabled = !ready;
+  btn.setAttribute("aria-disabled", ready ? "false" : "true");
+  btn.classList.toggle("rel-vincular-btn--ready", ready);
+}
+
 function renderRelacionesPlanningList() {
   syncRelacionesViewFromDraft();
   const container = document.getElementById("relPlanningList");
@@ -9662,6 +9706,7 @@ function renderRelacionesPlanningList() {
       </div>
     </div>`;
   }).join("");
+  refreshRelVincularCampaniasButton();
 }
 
 function renderRelacionesDataList() {
@@ -9686,6 +9731,7 @@ function renderRelacionesDataList() {
       </div>
     </div>`;
   }).join("");
+  refreshRelVincularCampaniasButton();
 }
 
 function renderRelacionesTabla() {
@@ -9696,7 +9742,6 @@ function renderRelacionesTabla() {
   const platF = normalizarTexto(relFiltroPlataforma);
   const tipoF = normalizarTexto(relFiltroTipo);
   const estF = relFiltroEstadoRel;
-  const planningByKey = new Map(getPlanningGroups().map((x) => [x.key, x.rec]));
   const rows = relaciones
     .map((rel, idx) => ({ rel, idx }))
     .filter(({ rel }) => {
@@ -9715,36 +9760,19 @@ function renderRelacionesTabla() {
       return true;
     });
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="dash-empty-mini">Sin relaciones para la búsqueda actual</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="dash-empty-mini">Sin relaciones para la búsqueda actual</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(({ rel, idx }) => {
     const parsed = parsePlanningKey(rel.planningKey);
     const platLabel = String(parsed.plataforma || "—").trim() || "—";
-    const tipoLabel = String(parsed.tipo || "—").trim() || "—";
     const badgePlat = relPlataformaBadgeClass(parsed.plataforma);
-    const badgeTipo = relTipoBadgeClass(parsed.tipo);
-    const recP = planningByKey.get(rel.planningKey);
-    const dataU = getDataUniqueList().find((d) => String(d.idCampania) === String(rel.idCampania || "").trim());
-    let score = Number(rel.coincidencia);
-    if (!Number.isFinite(score) && recP && dataU) score = calcularScore(recP, dataU);
-    if (!Number.isFinite(score)) score = 0;
-    const pct = Math.max(0, Math.min(100, Math.round(score)));
-    const fechaDisp = formatRelFechaRelDisplay(rel.fechaRelacion);
     const estado = String(rel.estado || "activo").toLowerCase() === "inactivo" ? "Inactivo" : "Activo";
     const estadoCls = estado === "Activo" ? "rel-estado-badge rel-estado-badge--on" : "rel-estado-badge rel-estado-badge--off";
     return `<tr>
       <td class="rel-td-planning">${escapeHtml(rel.planningKey)}</td>
       <td class="rel-td-data">${escapeHtml(rel.nombre || "")}</td>
       <td class="rel-td-plat"><span class="${badgePlat}">${escapeHtml(platLabel)}</span></td>
-      <td class="rel-td-tipo"><span class="${badgeTipo}">${escapeHtml(tipoLabel)}</span></td>
-      <td class="rel-td-fecha">${escapeHtml(fechaDisp)}</td>
-      <td class="rel-td-match">
-        <div class="rel-match-wrap">
-          <span class="rel-match-pct">${pct}%</span>
-          <div class="rel-match-bar" aria-hidden="true"><span class="rel-match-bar-fill" style="width:${pct}%"></span></div>
-        </div>
-      </td>
       <td class="rel-td-estado"><span class="${estadoCls}">${escapeHtml(estado)}</span></td>
       <td class="rel-td-actions">
         <div class="rel-row-actions">
@@ -10590,8 +10618,6 @@ function initRelacionesModule() {
     if (btn) btn.setAttribute("aria-expanded", nowHidden ? "false" : "true");
   });
 
-  document.getElementById("relExportBtn")?.addEventListener("click", exportRelacionesJsonFile);
-
   document.getElementById("relSelectAllPlanningBtn")?.addEventListener("click", () => {
     selectedPlanningKeys = new Set(getFilteredPlanningKeys());
     renderRelacionesPlanningList();
@@ -10619,8 +10645,10 @@ function initRelacionesModule() {
     else selectedDataCampaignKeys.add(key);
     renderRelacionesDataList();
   });
-  document.getElementById("linkCampaniasBtn")?.addEventListener("click", vincularCampanias);
-  document.getElementById("suggestRelBtn")?.addEventListener("click", sugerirRelaciones);
+  document.getElementById("relVincularCampaniasBtn")?.addEventListener("click", () => {
+    if (selectedPlanningKeys.size !== 1 || selectedDataCampaignKeys.size !== 1) return;
+    vincularCampanias();
+  });
   document.getElementById("relacionesTbody")?.addEventListener("click", (e) => {
     const t = e.target instanceof HTMLElement ? e.target : null;
     const pre = t?.closest("[data-rel-preselect]");
@@ -10659,6 +10687,7 @@ function initRelacionesModule() {
     const idx = Number(btn.getAttribute("data-sug-apply"));
     if (Number.isFinite(idx)) aplicarSugerencia(idx);
   });
+  refreshRelVincularCampaniasButton();
 }
 
 function dashboardMonthKeyToLabel(key) {
@@ -12547,7 +12576,8 @@ function renderDashboardTabla() {
     const semGlobalGasto = dashSemMetaG1(pctIdealGastoGlobal, pctRealGastoGlobal, "gasto");
     const semMesLeads = dashSemMetaG1(pctAvIdealL, pctAvRealL, "leads");
     const semMesGasto = dashSemMetaG1(pctAvIdealG, pctAvRealG, "gasto");
-    const cplClsGlobal = dashCplRealColorClass(pmGlobal.metaCplPeriod, cplRealGlobal);
+    /** Misma lógica de semáforo que CPL Real del grupo Leads (ok / warn / bad vs meta período). */
+    const cplClsGlobal = dashCplRealLeadsPeriodClass(pmGlobal.metaCplPeriod, cplRealGlobal);
     const cplClsMes = dashCplRealLeadsPeriodClass(pmMes.metaCplPeriod, cplRealMes);
     const sel = programaSeleccionado === rowKey ? "dash-row-selected" : "";
     const estadoDelivery = getDashboardRowDeliveryEstado(rowKey);
@@ -12756,12 +12786,13 @@ function renderDashboardChart(data) {
   if (needsWidthRetry) w = 960;
   else w = Math.min(Math.max(w, 320), 6000);
   const h = 120;
-  const plotPadL = 52;
-  const plotPadR = 52;
-  const axisLineL = 50;
-  const axisLineR = w - 50;
-  const tickTextL = 46;
-  const tickTextR = w - 46;
+  /* Márgenes horizontales: separar valores de ejes de la primera/última barra */
+  const plotPadL = 60;
+  const plotPadR = 60;
+  const axisLineL = plotPadL - 2;
+  const axisLineR = w - plotPadR + 2;
+  const tickTextL = 34;
+  const tickTextR = w - 32;
   /** Margen superior interno del trazado: evita que ticks/barras rocen el borde superior del SVG */
   const padT = 32;
   const cantidadDias = points.length;
@@ -13077,7 +13108,16 @@ function renderDashboardInsightsSidePanels() {
       if (sweep <= 0) return;
       const a0 = ang;
       const a1 = ang + sweep;
-      paths.push(`<path d="${dashboardInsightDonutSlice(cx, cy, rout, rin, a0, a1)}" fill="${seg.color}" stroke="${donutSegStroke}" stroke-width="0.75" />`);
+      const pathCmd = (t0, t1) =>
+        `<path d="${dashboardInsightDonutSlice(cx, cy, rout, rin, t0, t1)}" fill="${seg.color}" stroke="${donutSegStroke}" stroke-width="0.75" />`;
+      /* Anillo 100%: un solo arco 2π deja inicio=fin y el path SVG no pinta; partimos en dos medias lunas. */
+      if (sweep >= Math.PI * 2 - 1e-4) {
+        const mid = a0 + Math.PI;
+        paths.push(pathCmd(a0, mid));
+        paths.push(pathCmd(mid, a1));
+      } else {
+        paths.push(pathCmd(a0, a1));
+      }
       ang = a1;
     });
   }

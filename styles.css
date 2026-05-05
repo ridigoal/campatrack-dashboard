@@ -920,31 +920,27 @@ body {
   align-items: end;
 }
 
-.bitacora-saas-field-search {
-  grid-column: span 4;
+.bitacora-saas-field-programa {
+  grid-column: span 3;
 }
 
-.bitacora-saas-filters-grid > .bitacora-saas-field:nth-child(2) {
-  grid-column: span 3;
-}
-.bitacora-saas-filters-grid > .bitacora-saas-field:nth-child(3) {
+.bitacora-saas-field-tipo {
   grid-column: span 2;
 }
+
 .bitacora-saas-field-range {
-  grid-column: span 3;
+  grid-column: span 5;
 }
+
 .bitacora-saas-field-actions {
-  grid-column: span 12;
+  grid-column: span 2;
 }
 
 @media (min-width: 900px) {
   .bitacora-saas-field-actions {
-    grid-column: span 12;
+    grid-column: span 2;
     justify-self: end;
     width: auto;
-  }
-  .bitacora-saas-filters-grid > .bitacora-saas-field-actions {
-    grid-column: span 12;
   }
 }
 
@@ -984,6 +980,13 @@ body {
   gap: 10px;
 }
 
+.bitacora-saas-btn--icon {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
 .bitacora-saas-label--phantom {
   opacity: 0;
 }
@@ -995,6 +998,12 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.bitacora-saas-history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .bitacora-saas-select-compact {
@@ -1252,13 +1261,6 @@ body {
 }
 
 @media (max-width: 900px) {
-  .bitacora-saas-hero {
-    grid-template-columns: 1fr;
-  }
-  .bitacora-saas-hero-art {
-    order: -1;
-    max-height: 200px;
-  }
   .bitacora-saas-form-grid {
     grid-template-columns: 1fr;
   }
@@ -1268,11 +1270,18 @@ body {
   .bitacora-saas-filters .bitacora-saas-filters-grid {
     grid-template-columns: 1fr;
   }
-  .bitacora-saas-field-search,
-  .bitacora-saas-filters-grid > .bitacora-saas-field:nth-child(2),
-  .bitacora-saas-filters-grid > .bitacora-saas-field:nth-child(3),
+  .bitacora-saas-field-programa,
+  .bitacora-saas-field-tipo,
   .bitacora-saas-field-range {
     grid-column: 1;
+  }
+  .bitacora-saas-field-actions {
+    grid-column: 1;
+    justify-self: start;
+  }
+  .bitacora-saas-history-actions {
+    width: 100%;
+    justify-content: space-between;
   }
   .bitacora-card {
     grid-template-columns: 16px 1fr;
@@ -6987,6 +6996,11 @@ body.dark-mode .campatrack-login-select {
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.25), 0 1px 6px rgba(15, 23, 42, 0.2);
 }
 
+/* Fecha de actualización (~+3pt respecto al 11px compacto del dashboard) */
+#mainAppShell:has(#dashboardModule:not(.hidden)) #fecha-actualizacion.fecha-badge {
+  font-size: 14px;
+}
+
 #mainAppShell .app-saas-topbar-dashbind-inner {
   display: flex;
   align-items: center;
@@ -7895,14 +7909,20 @@ body.dark-mode .campatrack-login-select {
 
 /* Planning SaaS: KPI, cabecera, tabla */
 #planningModule .dashboard-saas {
-  gap: 16px;
+  gap: 12px;
+}
+
+#planningModule.plan-module-saas {
+  --plan-sticky-tipo-w: 62px;
+  --plan-sticky-program-w: 14rem;
 }
 
 #planningModule .planning-kpi-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 14px;
-  margin-bottom: 14px;
+  margin-top: 2px;
+  margin-bottom: 12px;
 }
 
 @media (max-width: 1400px) {
@@ -8009,6 +8029,196 @@ body.dark-mode .campatrack-login-select {
   font-weight: 600;
   line-height: 1.3;
   max-width: 16rem;
+}
+
+/* Sticky Tipo/Programa: ancho vía --plan-* (JS mide la celda más ancha; caps en JS) */
+#planningModule.plan-module-saas .planning-table-saas thead th.sticky-col-tipo,
+#planningModule.plan-module-saas .planning-table-saas td.sticky-col-tipo.planning-sticky-tipo {
+  left: 0 !important;
+  min-width: var(--plan-sticky-tipo-w) !important;
+  max-width: var(--plan-sticky-tipo-w) !important;
+  width: var(--plan-sticky-tipo-w) !important;
+  box-sizing: border-box;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: visible;
+}
+
+#planningModule.plan-module-saas .planning-table-saas thead th.sticky-col-program,
+#planningModule.plan-module-saas .planning-table-saas tbody td.sticky-col-program {
+  left: var(--plan-sticky-tipo-w) !important;
+  min-width: var(--plan-sticky-program-w) !important;
+  max-width: var(--plan-sticky-program-w) !important;
+  width: var(--plan-sticky-program-w) !important;
+  box-sizing: border-box;
+}
+
+/* PROGRAMA sticky: fondo opaco para no ver columnas detrás al scroll horizontal (no tocar Tipo) */
+#planningModule.plan-module-saas .planning-table-saas thead th.sticky-col-program {
+  isolation: isolate;
+  box-shadow:
+    inset -1px 0 0 rgba(15, 23, 42, 0.08),
+    2px 0 6px rgba(15, 23, 42, 0.07);
+}
+
+#planningModule.plan-module-saas .planning-table tbody td.sticky-col-program {
+  /* Por debajo de Tipo (z-index 7 en .planning-table); por encima de celdas desplazables (auto). */
+  z-index: 6;
+  isolation: isolate;
+  opacity: 1 !important;
+  background-color: #fff !important;
+  background-image: none !important;
+  backdrop-filter: none;
+  box-shadow:
+    inset -1px 0 0 rgba(15, 23, 42, 0.08),
+    2px 0 6px rgba(15, 23, 42, 0.07);
+}
+
+#planningModule.plan-module-saas .planning-table-saas td.sticky-col-tipo.planning-sticky-tipo > span {
+  display: inline-block;
+  max-width: none;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+#planningModule.plan-module-saas .planning-table-saas thead th.planning-th-meta-plan {
+  min-width: 2.75rem;
+  max-width: 3.5rem;
+  padding-left: 5px !important;
+  padding-right: 5px !important;
+  text-align: center !important;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+#planningModule.plan-module-saas .planning-table-saas td.planning-meta-cell {
+  min-width: 2.75rem;
+  max-width: 3.5rem;
+  padding: 8px 5px !important;
+  text-align: center !important;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+#planningModule.plan-module-saas .planning-campaign-name--only {
+  display: block;
+  font-weight: 800;
+  font-size: 0.9225rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Grupos por programa consecutivo: tonos pastel cíclicos (0 rosa, 1 violeta, 2 verde, 3 plomo,
+ * 4 crema, 5 azul). --plan-tone-* aplicados también a sticky y distribución mensual.
+ */
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-0 {
+  --plan-tone-cell: rgba(253, 242, 248, 0.82);
+  --plan-tone-stick: rgba(252, 231, 243, 0.95);
+  --plan-tone-prog: #fce7f3;
+  --plan-tone-prog-hover: #fbcfe8;
+  --plan-tone-pill: rgba(251, 207, 232, 0.38);
+  --plan-tone-muted: rgba(251, 213, 230, 0.55);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-1 {
+  --plan-tone-cell: rgba(237, 233, 254, 0.88);
+  --plan-tone-stick: rgba(229, 220, 252, 0.96);
+  --plan-tone-prog: #ede9fe;
+  --plan-tone-prog-hover: #ddd6fe;
+  --plan-tone-pill: rgba(196, 181, 253, 0.35);
+  --plan-tone-muted: rgba(210, 201, 250, 0.55);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-2 {
+  --plan-tone-cell: rgba(220, 252, 231, 0.76);
+  --plan-tone-stick: rgba(209, 250, 224, 0.93);
+  --plan-tone-prog: #d1fae5;
+  --plan-tone-prog-hover: #bbf7d0;
+  --plan-tone-pill: rgba(134, 239, 172, 0.32);
+  --plan-tone-muted: rgba(187, 247, 208, 0.52);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-3 {
+  --plan-tone-cell: rgba(226, 232, 240, 0.9);
+  --plan-tone-stick: rgba(226, 232, 240, 0.98);
+  --plan-tone-prog: #e2e8f0;
+  --plan-tone-prog-hover: #cbd5e1;
+  --plan-tone-pill: rgba(203, 213, 225, 0.45);
+  --plan-tone-muted: rgba(203, 213, 225, 0.58);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-4 {
+  --plan-tone-cell: rgba(254, 252, 232, 0.78);
+  --plan-tone-stick: rgba(254, 249, 195, 0.88);
+  --plan-tone-prog: #fef3c7;
+  --plan-tone-prog-hover: #fde68a;
+  --plan-tone-pill: rgba(253, 230, 138, 0.38);
+  --plan-tone-muted: rgba(253, 224, 154, 0.52);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-5 {
+  --plan-tone-cell: rgba(224, 242, 254, 0.82);
+  --plan-tone-stick: rgba(207, 235, 255, 0.94);
+  --plan-tone-prog: #e0f2fe;
+  --plan-tone-prog-hover: #bae6fd;
+  --plan-tone-pill: rgba(125, 211, 252, 0.32);
+  --plan-tone-muted: rgba(165, 220, 252, 0.52);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted):not(.sticky-col-tipo):not(.sticky-col-program) {
+  background: var(--plan-tone-cell);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td.sticky-col-tipo {
+  background: var(--plan-tone-stick);
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td.sticky-col-program {
+  background-color: var(--plan-tone-prog) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-cell-mes-inv,
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-cell-mes-lead,
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-cell-mes-cpl {
+  background: var(--plan-tone-pill) !important;
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-mes-muted {
+  background: var(--plan-tone-muted) !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover
+  > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted):not(.sticky-col-tipo):not(.sticky-col-program) {
+  background: rgba(219, 234, 254, 0.52);
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.sticky-col-tipo {
+  background: rgba(224, 242, 254, 0.78);
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.sticky-col-program {
+  background-color: var(--plan-tone-prog-hover) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-inv,
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-lead,
+#planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-cpl {
+  background: rgba(191, 219, 254, 0.4) !important;
 }
 
 #planningModule .planning-page-head-saas {
@@ -8217,38 +8427,117 @@ body.dark-mode .campatrack-login-select {
   border-right: 3px solid rgba(30, 41, 59, 0.45) !important;
 }
 
-#planningModule .planning-table tbody tr[data-record-id]:hover td {
+/* Filas con tono por programa usan su propio hover (evitar pisar el pastel) */
+#planningModule .planning-table tbody tr[data-record-id]:not([class*="planning-row-group-tone-"]):hover td {
   background: rgba(59, 130, 246, 0.045);
 }
 
-#planningModule .planning-table tbody tr[data-record-id]:hover .sticky-col-tipo,
-#planningModule .planning-table tbody tr[data-record-id]:hover .sticky-col-program {
+#planningModule .planning-table tbody tr[data-record-id]:not([class*="planning-row-group-tone-"]):hover .sticky-col-tipo {
   background: #fafbff;
 }
 
-/* Selección de fila: solo resaltado; no tocar pills mensuales ni forzar re-render (el clic en JS solo alterna clases) */
-#planningModule .planning-table tbody tr.row-selected > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
-  background: rgba(37, 99, 235, 0.1) !important;
+#planningModule .planning-table tbody tr[data-record-id]:not([class*="planning-row-group-tone-"]):hover .sticky-col-program {
+  background-color: #fafbff !important;
+  background-image: none !important;
+  opacity: 1 !important;
 }
 
-#planningModule .planning-table tbody tr.row-selected > td.sticky-col-tipo,
-#planningModule .planning-table tbody tr.row-selected > td.sticky-col-program {
-  background: rgba(37, 99, 235, 0.14) !important;
-  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.06), inset 4px 0 0 #2563eb;
+/* Planning: fila seleccionada — azul sólido, texto blanco, sin alpha (scroll/hover sin traslucidez) */
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td {
+  background-color: #2563eb !important;
+  background-image: none !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
+  box-shadow: inset 0 -1px 0 #1d4ed8;
 }
 
-#planningModule .planning-table tbody tr.row-selected:hover > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
-  background: rgba(37, 99, 235, 0.13) !important;
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.planning-cell-mes-inv,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.planning-cell-mes-lead,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.planning-cell-mes-cpl,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.planning-mes-muted {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
 }
 
-#planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo,
-#planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-program {
-  background: rgba(37, 99, 235, 0.17) !important;
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.sticky-col-tipo {
+  box-shadow:
+    2px 0 0 #1e40af,
+    inset 4px 0 0 #ffffff;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected > td.sticky-col-program {
+  box-shadow:
+    inset -1px 0 0 #1e40af,
+    2px 0 8px #1e40af,
+    inset 0 -1px 0 #1d4ed8;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected:hover > td {
+  background-color: #1d4ed8 !important;
+  opacity: 1 !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo {
+  box-shadow:
+    2px 0 0 #1e3a8a,
+    inset 4px 0 0 #ffffff;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected:hover > td.sticky-col-program {
+  box-shadow:
+    inset -1px 0 0 #1e3a8a,
+    2px 0 8px #1e3a8a,
+    inset 0 -1px 0 #1e40af;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-campaign-name--only,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-presupuesto-val,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-leads-total-chip,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-tracking-label {
+  color: #ffffff !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-plat-cell,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-plat-cell i {
+  color: #ffffff !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-meta-cell,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-body-cell {
+  color: #ffffff !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-pill,
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected:hover .planning-pill {
+  background: #ffffff !important;
+  background-image: none !important;
+  color: #1e40af !important;
+  border: 1px solid #dbeafe;
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected .planning-tipo-badge {
+  background: #ffffff !important;
+  color: #2563eb !important;
+}
+
+#planningModule.plan-module-saas .planning-table tbody tr.row-selected:hover .planning-pill {
+  background: #ffffff !important;
+  color: #1e3a8a !important;
 }
 
 #planningModule .planning-table-saas tbody tr[data-record-id] td {
   padding: 12px 11px;
   vertical-align: middle;
+}
+
+#planningModule.plan-module-saas .planning-table-saas tbody tr[data-record-id] > td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 #planningModule .planning-table-saas tbody tr[data-record-id] {
@@ -8262,6 +8551,15 @@ body.dark-mode .campatrack-login-select {
 
 #planningModule .planning-mes-muted {
   background: #fafafa !important;
+}
+
+/* Planning: doble clic solo en celdas permitidas; totales y CPL son solo lectura */
+#planningModule .planning-table tbody td.planning-cell-dbl-editable:not(.planning-mes-muted) {
+  cursor: text;
+}
+
+#planningModule .planning-table tbody td.planning-cell-readonly:not(.planning-mes-muted) {
+  cursor: default;
 }
 
 #planningModule .planning-table-saas td.planning-cell-mes-inv,
@@ -8500,7 +8798,7 @@ body.dark-mode .campatrack-login-select {
 
 #relacionesModule .rel-wrap-saas {
   padding: clamp(16px, 2vw, 26px);
-  padding-top: 8px;
+  padding-top: 6px;
 }
 
 #relacionesModule .rel-saas-hero {
@@ -8589,6 +8887,7 @@ body.dark-mode .campatrack-login-select {
   grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
   gap: 14px;
   margin-bottom: 16px;
+  margin-top: 0;
 }
 
 #relacionesModule .rel-kpi-card {
@@ -8864,33 +9163,58 @@ body.dark-mode .campatrack-login-select {
 }
 
 #relacionesModule .rel-center-bridge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   text-align: center;
-  padding: 20px 12px;
+  padding: 12px 10px;
 }
 
-#relacionesModule .rel-center-icon {
+#relacionesModule .rel-vincular-btn {
   display: inline-flex;
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
   align-items: center;
   justify-content: center;
-  font-size: 1.35rem;
-  background: rgba(239, 246, 255, 1);
-  color: var(--rel-accent);
-  border: 1px solid rgba(109, 40, 217, 0.12);
-  margin-bottom: 10px;
+  gap: 10px;
+  width: 100%;
+  max-width: 220px;
+  margin: 0;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: not-allowed;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
 }
 
-#relacionesModule .rel-center-title {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: #0f172a;
+#relacionesModule .rel-vincular-btn:not(:disabled) {
+  cursor: pointer;
+}
+
+#relacionesModule .rel-vincular-btn.rel-vincular-btn--ready:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, #5b21b6 0%, var(--rel-accent) 55%, #7c3aed 100%);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(109, 40, 217, 0.28);
+}
+
+#relacionesModule .rel-vincular-btn.rel-vincular-btn--ready:not(:disabled):hover {
+  filter: brightness(1.04);
 }
 
 #relacionesModule .rel-center-sub {
-  margin: 6px 0 0;
+  margin: 0;
+  max-width: 14rem;
   font-size: 0.82rem;
   color: #64748b;
   line-height: 1.35;
@@ -9078,19 +9402,13 @@ body.dark-mode .campatrack-login-select {
   }
 
   #relacionesModule .rel-center-bridge {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    text-align: left;
+    flex-direction: column;
+    text-align: center;
+    gap: 8px;
   }
 
-  #relacionesModule .rel-center-icon {
-    margin-bottom: 0;
-    width: 44px;
-    height: 44px;
-    font-size: 1.1rem;
+  #relacionesModule .rel-vincular-btn {
+    max-width: 100%;
   }
 }
 
@@ -9483,7 +9801,7 @@ body.dark-mode .campatrack-login-select {
 }
 
 #relacionesModule .rel-table-main.data-table {
-  min-width: 920px;
+  min-width: 640px;
 }
 
 #relacionesModule .rel-td-actions {
@@ -11124,7 +11442,7 @@ body.dark-mode .campatrack-login-select {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset;
 }
 
-/* Exportar — ícono Excel más visible (barra de segmentadores) */
+/* Exportar — botón tipo Excel (fondo verde + X blanca) */
 #dashboardModule.dash-module-saas .dash-toolbar-export #dashExportTableBtn.dash-export-btn.dash-export-btn--toolbar-icon {
   width: 42px !important;
   min-width: 42px !important;
@@ -11132,29 +11450,36 @@ body.dark-mode .campatrack-login-select {
   padding: 0 !important;
   margin: 0 !important;
   border-radius: 11px !important;
-  border: 1px solid rgba(21, 128, 61, 0.45) !important;
-  background: linear-gradient(180deg, #ecfdf5 0%, #bbf7d0 55%, #dcfce7 100%) !important;
-  color: #15803d !important;
-  font-size: 1.38rem !important;
+  border: 1px solid #0f5f2f !important;
+  background: #107c41 !important;
+  color: #fff !important;
+  font-size: 0 !important;
   line-height: 1 !important;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 2px 6px rgba(22, 163, 74, 0.22);
+  box-shadow: 0 2px 6px rgba(16, 124, 65, 0.35);
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-weight: 700 !important;
+  font-weight: 800 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-toolbar-export #dashExportTableBtn .dash-export-excel-x {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #fff;
 }
 
 #dashboardModule.dash-module-saas .dash-toolbar-export #dashExportTableBtn.dash-export-btn.dash-export-btn--toolbar-icon:hover:not(:disabled) {
-  background: linear-gradient(180deg, #d9fdeb 0%, #86efac 45%, #a7f3d0 100%) !important;
-  border-color: #16a34a !important;
-  color: #14532d !important;
+  background: #0d6a38 !important;
+  border-color: #0a522b !important;
+  color: #fff !important;
 }
 
 #dashboardModule.dash-module-saas .dash-toolbar-export #dashExportTableBtn.dash-export-btn.dash-export-btn--toolbar-icon:active:not(:disabled) {
   transform: translateY(1px);
-  box-shadow: 0 1px 2px rgba(22, 101, 52, 0.2) inset;
+  box-shadow: 0 1px 3px rgba(10, 82, 43, 0.45) inset;
 }
 
 /* Tabla principal: misma card que KPI / insights / segmentadores */
@@ -11640,18 +11965,18 @@ body.dark-mode .campatrack-login-select {
 }
 
 #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-ok {
-  background: rgba(209, 250, 229, 0.55) !important;
-  color: #166534 !important;
+  background: rgba(209, 250, 229, 0.78) !important;
+  color: #14532d !important;
 }
 
 #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-warn {
-  background: rgba(254, 240, 138, 0.52) !important;
-  color: #a16207 !important;
+  background: rgba(253, 224, 71, 0.72) !important;
+  color: #854d0e !important;
 }
 
 #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-bad {
-  background: rgba(254, 202, 202, 0.48) !important;
-  color: #b91c1c !important;
+  background: rgba(252, 165, 165, 0.72) !important;
+  color: #991b1b !important;
 }
 
 /* CPL global dentro de META (texto sobre fondo tabla) */
@@ -11673,15 +11998,15 @@ body.dark-mode .campatrack-login-select {
 }
 
 #dashboardModule.dash-module-saas .dash-row-selected td.dash-cpl-real-mes-ok {
-  background: rgba(209, 250, 229, 0.75) !important;
+  background: rgba(209, 250, 229, 0.9) !important;
 }
 
 #dashboardModule.dash-module-saas .dash-row-selected td.dash-cpl-real-mes-warn {
-  background: rgba(254, 240, 138, 0.65) !important;
+  background: rgba(253, 224, 71, 0.85) !important;
 }
 
 #dashboardModule.dash-module-saas .dash-row-selected td.dash-cpl-real-mes-bad {
-  background: rgba(254, 202, 202, 0.55) !important;
+  background: rgba(252, 165, 165, 0.85) !important;
 }
 
 /* Totales — fila resaltada (negro + texto blanco, todo el ancho) */
@@ -11696,11 +12021,36 @@ body.dark-mode .campatrack-login-select {
   font-weight: 700;
   position: sticky;
   bottom: 0;
-  z-index: 11;
+  /*
+   * SaaS pisaba los z-index específicos de columnas (16–20) con este bloque antes.
+   * Base: métricas desplazables > tbody sticky (≤9); esquinas fijas del footer replican 16–20.
+   * Por debajo del thead sticky esquinas (26–30).
+   */
+  z-index: 14 !important;
   border-top: 2px solid rgba(255, 255, 255, 0.2) !important;
   border-right-color: rgba(255, 255, 255, 0.12) !important;
   border-left-color: rgba(255, 255, 255, 0.12) !important;
   border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.programa-col {
+  z-index: 16 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.dash-plat-col {
+  z-index: 17 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.dash-int-col {
+  z-index: 18 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.tipo-col {
+  z-index: 19 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.dash-estado-col.dash-tfoot-estado {
+  z-index: 20 !important;
 }
 
 #dashboardModule.dash-module-saas .dash-table tfoot tr.dash-tfoot-row td.dash-tfoot-empty {
@@ -11787,6 +12137,27 @@ body.dark-mode .campatrack-login-select {
   font-size: 0.74rem !important;
   line-height: 1.2 !important;
   flex-shrink: 0 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--donut {
+  border-right: 1px solid rgba(148, 163, 184, 0.45);
+  padding-right: 10px !important;
+  box-sizing: border-box !important;
+}
+
+#dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--topcpl {
+  padding-left: 10px !important;
+}
+
+#dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--donut > .dash-chart-title {
+  color: #1d4ed8 !important;
+  font-weight: 800 !important;
+}
+
+#dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--topcpl > .dash-chart-title {
+  color: #6d28d9 !important;
+  font-weight: 800 !important;
+  text-align: right !important;
 }
 
 #dashboardModule.dash-module-saas .dash-side-card.dash-insights-split .dash-donut-body {
@@ -12247,29 +12618,181 @@ body.dark-mode #mainAppShell #planningModule .planning-mes-muted {
   background: rgba(15, 23, 42, 0.5) !important;
 }
 
-body.dark-mode #mainAppShell #planningModule .planning-table tbody .sticky-col-tipo,
-body.dark-mode #mainAppShell #planningModule .planning-table tbody .sticky-col-program {
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-0:not(.row-selected) {
+  --plan-tone-cell: rgba(157, 23, 77, 0.16);
+  --plan-tone-stick: rgba(131, 24, 67, 0.38);
+  --plan-tone-prog: #4a2540;
+  --plan-tone-prog-hover: #5c2f52;
+  --plan-tone-pill: rgba(219, 39, 119, 0.18);
+  --plan-tone-muted: rgba(15, 23, 42, 0.65);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-1:not(.row-selected) {
+  --plan-tone-cell: rgba(91, 33, 182, 0.14);
+  --plan-tone-stick: rgba(76, 29, 149, 0.36);
+  --plan-tone-prog: #342064;
+  --plan-tone-prog-hover: #3f2975;
+  --plan-tone-pill: rgba(167, 139, 250, 0.16);
+  --plan-tone-muted: rgba(15, 23, 42, 0.65);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-2:not(.row-selected) {
+  --plan-tone-cell: rgba(20, 83, 45, 0.16);
+  --plan-tone-stick: rgba(22, 101, 52, 0.36);
+  --plan-tone-prog: #1c3f2e;
+  --plan-tone-prog-hover: #225340;
+  --plan-tone-pill: rgba(74, 222, 128, 0.14);
+  --plan-tone-muted: rgba(15, 23, 42, 0.65);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-3:not(.row-selected) {
+  --plan-tone-cell: rgba(71, 85, 105, 0.28);
+  --plan-tone-stick: rgba(51, 65, 85, 0.45);
+  --plan-tone-prog: #334155;
+  --plan-tone-prog-hover: #3d4d63;
+  --plan-tone-pill: rgba(148, 163, 184, 0.2);
+  --plan-tone-muted: rgba(15, 23, 42, 0.72);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-4:not(.row-selected) {
+  --plan-tone-cell: rgba(133, 77, 14, 0.14);
+  --plan-tone-stick: rgba(120, 53, 15, 0.32);
+  --plan-tone-prog: #42321a;
+  --plan-tone-prog-hover: #563f1f;
+  --plan-tone-pill: rgba(250, 204, 21, 0.14);
+  --plan-tone-muted: rgba(15, 23, 42, 0.65);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr.planning-row-group-tone-5:not(.row-selected) {
+  --plan-tone-cell: rgba(30, 64, 175, 0.14);
+  --plan-tone-stick: rgba(30, 58, 138, 0.36);
+  --plan-tone-prog: #1e3560;
+  --plan-tone-prog-hover: #274474;
+  --plan-tone-pill: rgba(96, 165, 250, 0.16);
+  --plan-tone-muted: rgba(15, 23, 42, 0.65);
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted):not(.sticky-col-tipo):not(.sticky-col-program) {
+  background: var(--plan-tone-cell) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td.sticky-col-tipo {
+  background: var(--plan-tone-stick) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td.sticky-col-program {
+  background-color: var(--plan-tone-prog) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)
+  > td.planning-cell-mes-inv,
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-cell-mes-lead,
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-cell-mes-cpl {
+  background: var(--plan-tone-pill) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table-saas tbody tr[class*="planning-row-group-tone-"]:not(.row-selected) > td.planning-mes-muted {
+  background: var(--plan-tone-muted) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr:not([class*="planning-row-group-tone"]) > td.sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr:not([class*="planning-row-group-tone"]) > td.sticky-col-program {
   background: #1e293b !important;
   box-shadow: 2px 0 0 rgba(0, 0, 0, 0.25);
 }
 
-body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
-  background: rgba(96, 165, 250, 0.12) !important;
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover
+  > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted):not(.sticky-col-tipo):not(.sticky-col-program) {
+  background: rgba(55, 65, 90, 0.55) !important;
 }
 
-body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.sticky-col-tipo {
+  background: rgba(51, 65, 105, 0.65) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.sticky-col-program {
+  background-color: var(--plan-tone-prog-hover) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-inv,
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-lead,
+body.dark-mode #mainAppShell #planningModule.plan-module-saas .planning-table tbody tr[class*="planning-row-group-tone-"]:not(.row-selected)[data-record-id]:hover > td.planning-cell-mes-cpl {
+  background: rgba(59, 73, 99, 0.45) !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td {
+  background-color: #2563eb !important;
+  background-image: none !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
+  box-shadow: inset 0 -1px 0 #1d4ed8;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.planning-cell-mes-inv,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.planning-cell-mes-lead,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.planning-cell-mes-cpl,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.planning-mes-muted {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.sticky-col-tipo {
+  box-shadow:
+    2px 0 0 #1e40af,
+    inset 4px 0 0 #ffffff;
+}
+
 body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected > td.sticky-col-program {
-  background: rgba(96, 165, 250, 0.18) !important;
-  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.25), inset 4px 0 0 #60a5fa;
+  box-shadow:
+    inset -1px 0 0 #1e40af,
+    2px 0 8px #1e40af,
+    inset 0 -1px 0 #1d4ed8;
 }
 
-body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td:not(.planning-cell-mes-inv):not(.planning-cell-mes-lead):not(.planning-cell-mes-cpl):not(.planning-mes-muted) {
-  background: rgba(96, 165, 250, 0.16) !important;
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td {
+  background-color: #1d4ed8 !important;
+  opacity: 1 !important;
 }
 
-body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-tipo {
+  box-shadow:
+    2px 0 0 #1e3a8a,
+    inset 4px 0 0 #ffffff;
+}
+
 body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover > td.sticky-col-program {
-  background: rgba(96, 165, 250, 0.22) !important;
+  box-shadow:
+    inset -1px 0 0 #1e3a8a,
+    2px 0 8px #1e3a8a,
+    inset 0 -1px 0 #1e40af;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected .planning-meta-cell,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected .planning-body-cell {
+  color: #ffffff !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected .planning-pill,
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected:hover .planning-pill {
+  background: #ffffff !important;
+  background-image: none !important;
+  color: #1e40af !important;
+  border: 1px solid #dbeafe;
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode #mainAppShell #planningModule .planning-table tbody tr.row-selected .planning-tipo-badge {
+  background: #ffffff !important;
+  color: #2563eb !important;
 }
 
 body.dark-mode #mainAppShell .group-header {
@@ -12427,8 +12950,19 @@ body.dark-mode #mainAppShell #relacionesModule .rel-item-title {
 
 body.dark-mode #mainAppShell #relacionesModule .rel-saas-lead.data-subtitle,
 body.dark-mode #mainAppShell #relacionesModule .rel-kpi-hint,
-body.dark-mode #mainAppShell #relacionesModule .rel-item-meta {
+body.dark-mode #mainAppShell #relacionesModule .rel-item-meta,
+body.dark-mode #mainAppShell #relacionesModule .rel-center-sub {
   color: #94a3b8 !important;
+}
+
+body.dark-mode #mainAppShell #relacionesModule .rel-vincular-btn:disabled {
+  background: rgba(148, 163, 184, 0.1) !important;
+  color: #64748b !important;
+  border-color: rgba(148, 163, 184, 0.35) !important;
+}
+
+body.dark-mode #mainAppShell #relacionesModule .rel-vincular-btn.rel-vincular-btn--ready:not(:disabled) {
+  color: #fff !important;
 }
 
 body.dark-mode #mainAppShell #relacionesModule .rel-filter-select,
@@ -12708,17 +13242,17 @@ body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table tbody
 }
 
 body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-ok {
-  background: rgba(6, 95, 70, 0.5) !important;
-  color: #bbf7d0 !important;
+  background: rgba(6, 95, 70, 0.68) !important;
+  color: #d1fae5 !important;
 }
 
 body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-warn {
-  background: rgba(113, 63, 18, 0.55) !important;
-  color: #fde68a !important;
+  background: rgba(113, 63, 18, 0.72) !important;
+  color: #fef08a !important;
 }
 
 body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table tbody td.dash-cpl-real-mes-bad {
-  background: rgba(127, 29, 29, 0.5) !important;
+  background: rgba(127, 29, 29, 0.68) !important;
   color: #fecaca !important;
 }
 
@@ -12862,6 +13396,18 @@ body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-side-card.d
   color: #e2e8f0 !important;
 }
 
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--donut {
+  border-right-color: rgba(148, 163, 184, 0.35);
+}
+
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--donut > .dash-chart-title {
+  color: #60a5fa !important;
+}
+
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-side-card.dash-insights-split > .dash-insight-col--topcpl > .dash-chart-title {
+  color: #c4b5fd !important;
+}
+
 /* Evolución diaria: cabecera y leyendas legibles (barras/línea sin tocar en JS) */
 body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-evolucion-header {
   background: transparent !important;
@@ -12888,6 +13434,7 @@ body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-toolbar-act
 #mainAppShell.campatrack-app-shell {
   --campatrack-sidebar-w: 220px;
   --campatrack-sidebar-pad-x: 10px;
+  --campatrack-top-header-h: 64px;
   display: flex;
   flex-direction: row;
   align-items: stretch;
@@ -13207,6 +13754,7 @@ body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  padding-top: var(--campatrack-top-header-h);
   overflow-x: hidden;
   transition:
     margin-left 0.3s ease,
@@ -13215,9 +13763,13 @@ body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
 }
 
 .campatrack-top-header {
-  position: sticky;
+  position: fixed;
   top: 0;
-  z-index: calc(var(--z-modal) - 3);
+  left: var(--campatrack-sidebar-w);
+  width: calc(100% - var(--campatrack-sidebar-w));
+  max-width: calc(100% - var(--campatrack-sidebar-w));
+  box-sizing: border-box;
+  z-index: calc(var(--z-modal) - 1);
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -13228,6 +13780,10 @@ body.dark-mode #campatrackSidebarTooltip.campatrack-sidebar-tooltip {
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
+  transition:
+    left 0.3s ease,
+    width 0.3s ease,
+    max-width 0.3s ease;
 }
 
 #mainAppShell .campatrack-top-header-title {
@@ -13969,6 +14525,62 @@ body.dark-mode .campatrack-skeleton {
 .campatrack-skeleton--bar {
   height: 14px;
   width: 100%;
+}
+
+/*
+ * Dashboard SaaS — thead fila grupos: bloque Est.–Programa con marco negro 5px solo exterior.
+ * tabla border-collapse: separate → división interna solo border-right en gris estándar (una línea).
+ */
+#dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-estado-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: 5px solid #000 !important;
+  border-right: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.tipo-col.dash-th-sticky-corner,
+#dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-int-col.dash-th-sticky-corner,
+#dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-plat-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: none !important;
+  border-right: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
+}
+
+#dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th#dashProgramaHead.programa-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: none !important;
+  border-right: 5px solid #000 !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-estado-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: 5px solid #000 !important;
+  border-right: 1px solid rgba(148, 163, 184, 0.35) !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.tipo-col.dash-th-sticky-corner,
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-int-col.dash-th-sticky-corner,
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th.dash-plat-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: none !important;
+  border-right: 1px solid rgba(148, 163, 184, 0.35) !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode #mainAppShell #dashboardModule.dash-module-saas .dash-table thead tr.dash-thead-row-groups th#dashProgramaHead.programa-col.dash-th-sticky-corner {
+  border-top: 5px solid #000 !important;
+  border-bottom: 5px solid #000 !important;
+  border-left: none !important;
+  border-right: 5px solid #000 !important;
+  box-shadow: none !important;
 }
 
 .campatrack-skeleton--chart {

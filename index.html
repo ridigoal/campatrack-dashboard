@@ -326,12 +326,6 @@
 
   <section id="planningModule" class="hidden plan-module-saas">
     <div class="dashboard dashboard-saas">
-    <header class="planning-page-head-saas">
-      <div>
-        <h1 class="planning-page-title-main">Planificación de Campañas</h1>
-        <p class="planning-page-lead">Planifica, organiza y visualiza tus campañas de marketing en todos los canales.</p>
-      </div>
-    </header>
 
     <div class="planning-kpi-grid" role="region" aria-label="Indicadores del planning">
       <article class="planning-kpi-card planning-kpi-card--primary">
@@ -462,11 +456,11 @@
               <th class="group-header group-end" colspan="12">DISTRIBUCIÓN CPL</th>
             </tr>
             <tr>
-              <th>Leads</th>
-              <th>Interesados</th>
-              <th>Postulantes</th>
-              <th>Matriculados</th>
-              <th class="group-end">CPL Meta</th>
+              <th class="planning-th-meta-plan">Leads</th>
+              <th class="planning-th-meta-plan">Inte.</th>
+              <th class="planning-th-meta-plan">Post</th>
+              <th class="planning-th-meta-plan">Matri</th>
+              <th class="planning-th-meta-plan group-end">CPL</th>
               <th>Intake</th>
               <th>Inicio</th>
               <th>Fin</th>
@@ -489,29 +483,6 @@
 
   <section id="bitacoraModule" class="hidden bitacora-saas" aria-label="Módulo Bitácora">
     <div class="bitacora-saas-wrap">
-      <header class="bitacora-saas-hero" aria-labelledby="bitacoraHeroTitle">
-        <div class="bitacora-saas-hero-text">
-          <h2 id="bitacoraHeroTitle" class="bitacora-saas-hero-title">Bitácora</h2>
-          <p class="bitacora-saas-hero-sub">Registra y consulta los cambios y mejoras realizadas en tus campañas.</p>
-          <div class="bitacora-saas-hero-card" role="note">
-            <span class="bitacora-saas-hero-card-ico" aria-hidden="true"><i class="fa-solid fa-book"></i></span>
-            <div>
-              <p class="bitacora-saas-hero-card-title">Historial de cambios de campañas</p>
-              <p class="bitacora-saas-hero-card-desc">Documenta decisiones, pruebas y ajustes para mantener al equipo alineado.</p>
-            </div>
-          </div>
-        </div>
-        <div class="bitacora-saas-hero-art" aria-hidden="true">
-          <div class="bitacora-saas-clipboard">
-            <div class="bitacora-saas-clipboard-top"></div>
-            <ul class="bitacora-saas-clipboard-lines">
-              <li></li><li></li><li></li><li></li>
-            </ul>
-            <div class="bitacora-saas-clipboard-pen"></div>
-          </div>
-        </div>
-      </header>
-
       <section class="bitacora-saas-card bitacora-saas-new" aria-labelledby="bitacoraNewHeading">
         <div class="bitacora-saas-card-head">
           <h3 id="bitacoraNewHeading" class="bitacora-saas-section-title">Nueva entrada</h3>
@@ -561,20 +532,13 @@
         </div>
       </section>
 
-      <section class="bitacora-saas-card bitacora-saas-filters" aria-label="Filtros y búsqueda">
+      <section class="bitacora-saas-card bitacora-saas-filters" aria-label="Filtros">
         <div class="bitacora-saas-filters-grid">
-          <label class="bitacora-saas-field bitacora-saas-field-search">
-            <span class="bitacora-saas-label">Búsqueda</span>
-            <span class="bitacora-saas-search-wrap">
-              <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-              <input id="bitacoraBusquedaInput" class="bitacora-saas-input bitacora-saas-input-search" type="search" placeholder="Buscar en título, programa, tipo o descripción…" autocomplete="off" />
-            </span>
-          </label>
-          <label class="bitacora-saas-field">
+          <label class="bitacora-saas-field bitacora-saas-field-programa">
             <span class="bitacora-saas-label">Programa</span>
             <input id="bitacoraFiltroPrograma" class="bitacora-saas-input" type="search" placeholder="Filtrar por programa…" autocomplete="off" />
           </label>
-          <label class="bitacora-saas-field">
+          <label class="bitacora-saas-field bitacora-saas-field-tipo">
             <span class="bitacora-saas-label">Tipo</span>
             <select id="bitacoraFiltroTipo" class="bitacora-saas-input bitacora-saas-select" aria-label="Filtrar bitácora por tipo">
               <option value="">Todos</option>
@@ -584,15 +548,13 @@
             <span class="bitacora-saas-label">Rango de fechas</span>
             <div class="bitacora-saas-range-row">
               <input id="bitacoraFechaRango" class="bitacora-saas-input" type="text" aria-label="Rango de fechas bitácora" placeholder="Selecciona rango" />
-              <button id="bitacoraAplicarRangoBtn" type="button" class="bitacora-saas-btn bitacora-saas-btn--secondary">Aplicar</button>
             </div>
           </div>
           <div class="bitacora-saas-field bitacora-saas-field-actions">
             <span class="bitacora-saas-label bitacora-saas-label--phantom" aria-hidden="true">Acciones</span>
             <div class="bitacora-saas-inline-btns">
-              <button type="button" id="bitacoraLimpiarFiltrosBtn" class="bitacora-saas-btn bitacora-saas-btn--ghost">Limpiar filtros</button>
-              <button type="button" id="bitacoraExportBtn" class="bitacora-saas-btn bitacora-saas-btn--secondary">
-                <i class="fa-solid fa-download" aria-hidden="true"></i> Exportar
+              <button type="button" id="bitacoraLimpiarFiltrosBtn" class="bitacora-saas-btn bitacora-saas-btn--ghost bitacora-saas-btn--icon" aria-label="Limpiar filtros" title="Limpiar filtros">
+                <i class="fa-solid fa-filter" aria-hidden="true"></i>
               </button>
             </div>
           </div>
@@ -602,13 +564,18 @@
       <section class="bitacora-saas-history" aria-labelledby="bitacoraHistHeading">
         <div class="bitacora-saas-history-head">
           <h3 id="bitacoraHistHeading" class="bitacora-saas-section-title">Historial de entradas</h3>
-          <label class="bitacora-saas-sort">
-            <span class="visually-hidden">Orden</span>
-            <select id="bitacoraOrdenSelect" class="bitacora-saas-input bitacora-saas-select bitacora-saas-select-compact" aria-label="Ordenar entradas">
-              <option value="recientes">Más recientes primero</option>
-              <option value="antiguos">Más antiguos primero</option>
-            </select>
-          </label>
+          <div class="bitacora-saas-history-actions">
+            <button type="button" id="bitacoraExportBtn" class="bitacora-saas-btn bitacora-saas-btn--secondary">
+              <i class="fa-solid fa-download" aria-hidden="true"></i> Exportar
+            </button>
+            <label class="bitacora-saas-sort">
+              <span class="visually-hidden">Orden</span>
+              <select id="bitacoraOrdenSelect" class="bitacora-saas-input bitacora-saas-select bitacora-saas-select-compact" aria-label="Ordenar entradas">
+                <option value="recientes">Más recientes primero</option>
+                <option value="antiguos">Más antiguos primero</option>
+              </select>
+            </label>
+          </div>
         </div>
         <div id="bitacoraTimelineList" class="bitacora-timeline" role="feed" aria-label="Lista de entradas de bitácora"></div>
         <footer class="bitacora-saas-pagination" aria-label="Paginación">
@@ -847,21 +814,6 @@
 
   <section id="relacionesModule" class="hidden rel-module-saas" aria-label="Módulo Relaciones">
     <div class="data-wrap rel-wrap-saas">
-      <header class="rel-saas-hero">
-        <div class="rel-saas-title-row">
-          <div class="rel-saas-title-icon" aria-hidden="true"><i class="fa-solid fa-link"></i></div>
-          <div>
-            <h2 class="data-title rel-saas-title">Relaciones</h2>
-            <p class="data-subtitle rel-saas-lead">Vincula campañas de Planning con campañas únicas de Data para consolidar y analizar la información.</p>
-          </div>
-        </div>
-        <div class="rel-saas-hero-actions">
-          <button id="linkCampaniasBtn" type="button" class="btn-toolbar btn-primary rel-btn-link"><i class="fa-solid fa-link" aria-hidden="true"></i> Vincular automático</button>
-          <button id="suggestRelBtn" type="button" class="btn-toolbar rel-btn-suggest"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Sugerir relaciones</button>
-          <button id="relExportBtn" type="button" class="btn-toolbar rel-btn-suggest"><i class="fa-solid fa-download" aria-hidden="true"></i> Exportar</button>
-        </div>
-      </header>
-
       <div class="rel-kpi-grid" role="region" aria-label="Indicadores de relaciones">
         <article class="rel-kpi-card rel-kpi-card--emerald">
           <div class="rel-kpi-ico-wrap" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></div>
@@ -976,9 +928,17 @@
 
         <div class="rel-col-center">
           <div class="rel-center-bridge">
-            <div class="rel-center-icon" aria-hidden="true"><i class="fa-solid fa-link"></i></div>
-            <p class="rel-center-title">Vincula campañas</p>
-            <p class="rel-center-sub">Arrastra y suelta o selecciona para crear la relación.</p>
+            <button
+              type="button"
+              id="relVincularCampaniasBtn"
+              class="rel-vincular-btn"
+              disabled
+              aria-disabled="true"
+            >
+              <i class="fa-solid fa-link" aria-hidden="true"></i>
+              <span>Vincular campañas</span>
+            </button>
+            <p class="rel-center-sub">Selecciona exactamente una campaña en Planning y una en Data para activar.</p>
           </div>
         </div>
 
@@ -1024,9 +984,6 @@
                 <th>Planning</th>
                 <th>Data</th>
                 <th>Plataforma</th>
-                <th>Tipo de campaña</th>
-                <th>Fecha relación</th>
-                <th>Coincidencia</th>
                 <th>Estado</th>
                 <th>Acciones</th>
               </tr>
@@ -1156,7 +1113,7 @@
             <div id="fecha-actualizacion" class="fecha-badge fecha-badge--dash-toolbar hidden" aria-live="polite" role="status"></div>
           </div>
           <div class="dash-toolbar-item dash-toolbar-export">
-            <button type="button" id="dashExportTableBtn" class="dash-export-btn dash-export-btn--toolbar-icon" aria-label="Exportar tabla del dashboard a Excel" title="Exportar Excel">📊</button>
+            <button type="button" id="dashExportTableBtn" class="dash-export-btn dash-export-btn--toolbar-icon" aria-label="Exportar tabla del dashboard a Excel" title="Exportar Excel"><span class="dash-export-excel-x" aria-hidden="true">X</span></button>
           </div>
         </div>
       </div>
