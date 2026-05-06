@@ -8189,6 +8189,16 @@ function formatNumberSmartData(n) {
   return String(Number(n.toFixed(2)));
 }
 
+function formatNumberWithCommasDataCard(n) {
+  if (!Number.isFinite(n)) return "";
+  const normalized = Math.abs(n - Math.round(n)) < 1e-9 ? Math.round(n) : Number(n.toFixed(2));
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(normalized);
+}
+
+function isDataCampaignAlcanceLike(name) {
+  return String(name || "").toLowerCase().includes("alcance");
+}
+
 function formatCurrencyUSDData(n) {
   if (!Number.isFinite(n)) return "";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
@@ -8283,27 +8293,29 @@ function refreshDataGeneralStatusBar() {
 function updateDataKpisFromGeneral() {
   const uniq = new Set();
   let gasto = 0;
-  let leads = 0;
-  let imp = 0;
-  let clics = 0;
+  let leadsPerf = 0;
+  let impPerf = 0;
+  let clicsPerf = 0;
   dataReal.forEach((r) => {
     const idc = String(r.idCampania ?? "").trim();
     if (idc) uniq.add(idc);
     gasto += Number(r.gasto) || 0;
-    leads += Number(r.leads) || 0;
-    imp += Number(r.impresiones) || 0;
-    clics += Number(r.clics) || 0;
+    if (!isDataCampaignAlcanceLike(r.nombre)) {
+      leadsPerf += Number(r.leads) || 0;
+      impPerf += Number(r.impresiones) || 0;
+      clicsPerf += Number(r.clics) || 0;
+    }
   });
   const setText = (id, text) => {
     const node = document.getElementById(id);
     if (node) node.textContent = text;
   };
-  setText("dataKpiRegistros", formatNumberSmartData(dataReal.length));
-  setText("dataKpiCampanas", formatNumberSmartData(uniq.size));
+  setText("dataKpiRegistros", formatNumberWithCommasDataCard(dataReal.length));
+  setText("dataKpiCampanas", formatNumberWithCommasDataCard(uniq.size));
   setText("dataKpiGasto", formatCurrencyUSDData(gasto));
-  setText("dataKpiLeads", formatNumberSmartData(leads));
-  setText("dataKpiImpresiones", formatNumberSmartData(imp));
-  setText("dataKpiClics", formatNumberSmartData(clics));
+  setText("dataKpiLeads", formatNumberWithCommasDataCard(leadsPerf));
+  setText("dataKpiImpresiones", formatNumberWithCommasDataCard(impPerf));
+  setText("dataKpiClics", formatNumberWithCommasDataCard(clicsPerf));
 }
 
 function filtrarData() {
@@ -8584,7 +8596,6 @@ function initDataLoadModal() {
   };
   const close = () => modal.classList.add("hidden");
   openBtn.addEventListener("click", () => open("general"));
-  document.getElementById("openDataLoadBtnHero")?.addEventListener("click", () => open("general"));
   openAnunciosBtn.addEventListener("click", () => open("anuncios"));
   closeBtn.addEventListener("click", close);
   modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
@@ -8864,9 +8875,6 @@ function initDataFilters() {
   document.getElementById("deleteSelectedDataBtn")?.addEventListener("click", eliminarFilasSeleccionadas);
   document.getElementById("deleteSelectedAnunciosBtn")?.addEventListener("click", eliminarFilasSeleccionadasAnuncios);
   document.getElementById("clearStorageBtn")?.addEventListener("click", limpiarSoloModuloData);
-  document.getElementById("dataModuleImportBtn")?.addEventListener("click", () => {
-    document.getElementById("importDataFileInput")?.click();
-  });
   document.getElementById("dataFiltersAdvancedBtn")?.addEventListener("click", () => {
     const wrap = document.getElementById("dataAdvFiltersWrap");
     const btn = document.getElementById("dataFiltersAdvancedBtn");
