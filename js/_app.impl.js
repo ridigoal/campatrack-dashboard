@@ -16,7 +16,7 @@ import {
 
 /**
  * Almacén clave-valor en **memoria** (no usa `window.localStorage` del navegador).
- * Tras el login, la data se hidrata con GET /api/data; la persistencia duradera es POST al publicar.
+ * Tras el login, la data se hidrata con GET /api/data; al publicar se persiste con POST /api/data (misma ruta que la lectura).
  */
 const appMemoryKV = (function createMemoryKV() {
   const m = Object.create(null);
@@ -60,9 +60,13 @@ const appMemorySession = (function createMemoryKV() {
 /** JSON del último bundle aplicado tras publicar con éxito en la API (equivalente a `dataOriginal` serializado). */
 let dataOriginalBundleJson = null;
 
-function syncDataOriginalFromPublishedDraft() {
+function syncDataOriginalFromPublishedDraft(publishedSnapshot) {
   try {
-    dataOriginalBundleJson = JSON.stringify(construirSnapshotDesdeLocalStorageComoExport());
+    if (publishedSnapshot != null && typeof publishedSnapshot === "object" && !Array.isArray(publishedSnapshot)) {
+      dataOriginalBundleJson = JSON.stringify(publishedSnapshot);
+    } else {
+      dataOriginalBundleJson = JSON.stringify(buildMemorySnapshotForPublish());
+    }
   } catch (_) {
     dataOriginalBundleJson = null;
   }
@@ -192,8 +196,8 @@ let selectedCcRowId = null;
 /** Consumo por campaña (planning record id) — `consumo_por_campaña` */
 const consumoPorCampaña = {};
 
-/** Tras el arranque: aplazar escritura a localStorage/API hasta "Publicar" (borrador en memoria). */
-let appDeferredDiskPersistence = false;
+/** Por defecto aplazar escritura a localStorage hasta "Publicar" (evita sembrar LS obsoleto antes del login y GET /api/data). */
+let appDeferredDiskPersistence = true;
 let appPublishSnapshotBaselineJson = null;
 let appPendingPublishCount = 0;
 let appPublishModalBusy = false;
@@ -391,6 +395,7 @@ let planningMergedRecordsCache = null;
 function syncPlanningMergedCacheFromAppStateDraft() {
   const recs = ensurePlanningDraftShape().records;
   planningMergedRecordsCache = recs.map((r) => (r && typeof r === "object" ? { ...r } : r));
+  migratePlanningRowsTeamIds(planningMergedRecordsCache);
 }
 
 try {
@@ -474,8 +479,18 @@ function getCurrentTeamId() {
 function normalizeRowTeamId(row) {
   const v = row && row.teamId != null ? String(row.teamId).trim() : "";
   if (!v) return "";
-  const r = resolveCampatrackTeamId(v);
-  return r || v;
+  return resolveLegacyGeneralTeamIdForSession(v);
+}
+
+function resolveLegacyGeneralTeamIdForSession(rawTeamId, sessionTeamId = getCurrentTeamId()) {
+  const raw = String(rawTeamId ?? "").trim();
+  if (!raw) return "";
+  const resolved = resolveCampatrackTeamId(raw) || raw;
+  if (resolved === "team_general") {
+    const current = String(sessionTeamId ?? "").trim();
+    return current || resolved;
+  }
+  return resolved;
 }
 
 function rowBelongsToCurrentTeam(row) {
@@ -484,6 +499,18 @@ function rowBelongsToCurrentTeam(row) {
   const rt = String(normalizeRowTeamId(row)).trim();
   if (!rt) return false;
   return rt === ct;
+}
+
+/** Filas del borrador que deben fusionarse en el cache publicado: equipo de sesión + filas sin teamId (se estampan al publicar). */
+function planningDraftRowsForPlanningMerge() {
+  const draft = planningDraftRecords();
+  const ct = String(getCurrentTeamId() || "").trim();
+  if (!ct) return draft.slice();
+  return draft.filter((r) => {
+    const rt = normalizeRowTeamId(r);
+    if (!rt) return true;
+    return rowBelongsToCurrentTeam(r);
+  });
 }
 
 /** Misma partición que `campaign_data.user_id` en API: `teamId` canónico; si falta, username (legado). */
@@ -535,11 +562,12 @@ function readParsedPlanningPayloadFromDisk() {
 
 function migratePlanningRowsTeamIds(allRows) {
   let changed = false;
+  const sessionTeamId = getCurrentTeamId();
   for (const r of allRows) {
     if (!r || typeof r !== "object") continue;
     const raw = r.teamId == null ? "" : String(r.teamId).trim();
     if (!raw) continue;
-    const next = resolveCampatrackTeamId(raw) || raw;
+    const next = resolveLegacyGeneralTeamIdForSession(raw, sessionTeamId);
     if (String(r.teamId).trim() !== next) {
       r.teamId = next;
       changed = true;
@@ -550,11 +578,12 @@ function migratePlanningRowsTeamIds(allRows) {
 
 function migrateMissingTeamIdOnRows(arr) {
   let changed = false;
+  const sessionTeamId = getCurrentTeamId();
   for (const r of arr || []) {
     if (!r || typeof r !== "object") continue;
     const raw = r.teamId == null ? "" : String(r.teamId).trim();
     if (!raw) continue;
-    const next = resolveCampatrackTeamId(raw) || raw;
+    const next = resolveLegacyGeneralTeamIdForSession(raw, sessionTeamId);
     if (String(r.teamId).trim() !== next) {
       r.teamId = next;
       changed = true;
@@ -588,12 +617,12 @@ function ensurePlanningArrayStableUniqueIds(arr) {
 function recomputePlanningMergedCacheFromRecords() {
   const tid = getCurrentTeamId();
   const base =
-    shouldDeferDiskPersistence() && Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
+    Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length > 0
       ? planningMergedRecordsCache.slice()
       : readParsedPlanningPayloadFromDisk().rows;
   planningMergedRecordsCache = mergeRowsByTeamId(
     base,
-    ensurePlanningDraftShape().records,
+    planningDraftRowsForPlanningMerge(),
     tid,
     normalizeRowTeamId
   );
@@ -1822,7 +1851,7 @@ function applyMemorySnapshotFromBundle(snap) {
     } else {
       const tid = getCurrentTeamId();
       const base =
-        shouldDeferDiskPersistence() && Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length
+        Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length > 0
           ? planningMergedRecordsCache.slice()
           : readParsedPlanningPayloadFromDisk().rows;
       planningMergedRecordsCache = mergeRowsByTeamId(base, rows, tid, normalizeRowTeamId);
@@ -2006,7 +2035,7 @@ function flushAllPersistedStateToDisk() {
     }
     guardarTodo({ incluirTablasData: true });
   });
-  void persistPublishedBundleToBackend();
+  /** POST al servidor lo ejecuta `runPublishFlowWithModal` (await) para no duplicar ni cerrar antes del OK. */
 }
 
 function refreshTodosModulosTrasBorradorOPublicar() {
@@ -2123,6 +2152,17 @@ async function runPublishFlowWithModal() {
     } catch (err) {
       console.warn("Publicar sin modal", err);
     }
+    const authedBare = typeof isCampatrackAuthenticated === "function" && isCampatrackAuthenticated();
+    if (authedBare) {
+      try {
+        await persistPublishedBundleToBackend();
+      } catch (err) {
+        console.error("[CampaTrack publicar] Falló el guardado:", err);
+        showCampatrackToast(String(err?.message || "No se pudo publicar en el servidor."), "error");
+        updatePublishDraftToolbar();
+        return;
+      }
+    }
     cancelPendingDraftNotify();
     captureAppPublishBaseline();
     appPendingPublishCount = 0;
@@ -2142,7 +2182,7 @@ async function runPublishFlowWithModal() {
     try {
       flushAllPersistedStateToDisk();
     } catch (err) {
-      console.warn("Publicar: error al guardar", err);
+      console.warn("Publicar: error al volcar copia local", err);
     }
   };
   await new Promise((resolve) => {
@@ -2157,6 +2197,30 @@ async function runPublishFlowWithModal() {
       }
     }, 100);
   });
+
+  const authed = typeof isCampatrackAuthenticated === "function" && isCampatrackAuthenticated();
+  let serverOk = true;
+  if (authed) {
+    try {
+      serverOk = (await persistPublishedBundleToBackend()) === true;
+    } catch (err) {
+      serverOk = false;
+      console.error("[CampaTrack publicar] Falló el guardado en servidor:", err);
+      showCampatrackToast(
+        String(err?.message || "No se pudo publicar en el servidor. Revisa la conexión e inténtalo de nuevo."),
+        "error"
+      );
+    }
+  }
+
+  if (authed && !serverOk) {
+    setPublishModalPhase("progress");
+    closePublishModal();
+    appPublishModalBusy = false;
+    updatePublishDraftToolbar();
+    return;
+  }
+
   cancelPendingDraftNotify();
   captureAppPublishBaseline();
   appPendingPublishCount = 0;
@@ -2225,6 +2289,7 @@ function persistPlanningData(opts = {}) {
   const fromBootstrap = opts.fromBootstrap === true;
   recomputePlanningMergedCacheFromRecords();
   const merged = planningMergedRecordsCache || planningDraftRecords().slice();
+  migratePlanningRowsTeamIds(merged);
   const maxMergedId = merged.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
   if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
     setPlanningRecordIdSeq(Math.max(Math.max(1, Math.round(Number(getPlanningRecordIdSeq()))), maxMergedId + 1));
@@ -6294,69 +6359,90 @@ const CAMPATRACK_API_ORIGIN =
     ? String(window.CAMPATRACK_API_ORIGIN).replace(/\/$/, "")
     : "http://localhost:3000";
 
+/** Opciones fetch para GET /api/data — evita 304 / caché HTTP del navegador. */
+const CAMPATRACK_FETCH_OPTIONS_GET_API_DATA = Object.freeze({ cache: "no-store" });
+
+/**
+ * Persiste el borrador actual en el backend. Usa snapshot en memoria (no mezcla con LS obsoleto).
+ * @returns {Promise<boolean>} true si hubo sesión y el POST terminó bien
+ */
 async function persistPublishedBundleToBackend() {
-  try {
-    if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) return;
-    syncCcBitacoraModeloDraftFromRuntime();
-    recomputePlanningMergedCacheFromRecords();
-    const mergedPlan = planningMergedRecordsCache || planningDraftRecords().slice();
-    const base = obtenerDataCompletaRealParaAPI();
-    const data = {
-      ...base,
-      ...appState.dataDraft,
-      planning_data: { records: mergedPlan, recordIdSeq: getPlanningRecordIdSeq() }
-    };
-    await guardarDataEnAPI(data);
-  } catch (e) {
-    console.warn("persistPublishedBundleToBackend", e);
+  if (typeof isCampatrackAuthenticated !== "function" || !isCampatrackAuthenticated()) {
+    console.warn("[CampaTrack publicar] Sin sesión: no se envía bundle al servidor.");
+    return false;
   }
+  syncCcBitacoraModeloDraftFromRuntime();
+  recomputePlanningMergedCacheFromRecords();
+  const data = buildMemorySnapshotForPublish();
+  return await guardarDataEnAPI(data);
 }
 
 async function guardarDataEnAPI(dataCompletaReal) {
-  console.log("DATA ENVIADA:", dataCompletaReal);
-
   if (
     dataCompletaReal == null ||
     typeof dataCompletaReal !== "object" ||
     Array.isArray(dataCompletaReal) ||
     Object.keys(dataCompletaReal).length === 0
   ) {
-    console.error("No se envía data a la API: objeto vacío o inválido");
-    return;
+    const msg = "[CampaTrack publicar] No se envía: bundle vacío o inválido.";
+    console.error(msg);
+    throw new Error(msg);
   }
 
+  const rawSes = appMemorySession.getItem(SS_USER_SESSION_JSON);
+  const user = rawSes ? JSON.parse(rawSes) : null;
+
+  if (!user || !user.username) {
+    const msg = "[CampaTrack publicar] No hay usuario en sesión.";
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
+  if (!partitionKey) {
+    const msg = "[CampaTrack publicar] No hay clave de partición (team_id) para guardar.";
+    console.error(msg);
+    throw new Error(msg);
+  }
+
+  const planRec =
+    dataCompletaReal.planning_data && Array.isArray(dataCompletaReal.planning_data.records)
+      ? dataCompletaReal.planning_data.records
+      : [];
+  console.info("[CampaTrack publicar] Enviando POST /api/data:", {
+    partitionKey,
+    topKeys: Object.keys(dataCompletaReal),
+    planningRecords: planRec.length,
+    recordIdSeq: dataCompletaReal.planning_data?.recordIdSeq
+  });
+
+  const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/data`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: partitionKey,
+      data: dataCompletaReal
+    })
+  });
+
+  const bodyText = await res.text();
+  let bodyJson = null;
   try {
-    const rawSes = appMemorySession.getItem(SS_USER_SESSION_JSON);
-    const user = rawSes ? JSON.parse(rawSes) : null;
-
-    if (!user || !user.username) {
-      console.error("No hay usuario en sesión");
-      return;
-    }
-
-    const partitionKey = campatrackCampaignDataPartitionKeyFromUserLike(user);
-    if (!partitionKey) {
-      console.error("No hay clave de partición para guardar campaña");
-      return;
-    }
-
-    const res = await fetch(`${CAMPATRACK_API_ORIGIN}/api/save-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: partitionKey,
-        data: dataCompletaReal
-      })
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    syncDataOriginalFromPublishedDraft();
-    applyPlanningOriginalFromDraft();
-    console.log("Data guardada correctamente para partición:", partitionKey);
-  } catch (_err) {
-    console.error("Error guardando data en API");
+    bodyJson = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    /* respuesta no JSON */
   }
+
+  if (!res.ok) {
+    console.error("[CampaTrack publicar] Respuesta de error:", res.status, bodyText?.slice(0, 800));
+    throw new Error(`Error del servidor (${res.status}). ${bodyText ? bodyText.slice(0, 200) : ""}`);
+  }
+
+  console.info("[CampaTrack publicar] Guardado OK. Respuesta:", bodyJson ?? bodyText);
+
+  syncDataOriginalFromPublishedDraft(dataCompletaReal);
+  applyPlanningOriginalFromDraft();
+  return true;
 }
 
 /**
@@ -6471,7 +6557,8 @@ async function exportarDatosSistema() {
     }
     setBusy(true);
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`,
+      CAMPATRACK_FETCH_OPTIONS_GET_API_DATA
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -6641,7 +6728,8 @@ async function afterLoginSuccess(user) {
       return null;
     }
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`,
+      CAMPATRACK_FETCH_OPTIONS_GET_API_DATA
     );
     if (!res.ok) {
       console.error("Error cargando data:", `HTTP ${res.status}`);
@@ -6653,6 +6741,13 @@ async function afterLoginSuccess(user) {
       console.log("No hay data para este usuario");
       return null;
     }
+    const planSrc = bundle.planning_data ?? bundle.planning;
+    const planRecs = Array.isArray(planSrc?.records) ? planSrc.records : Array.isArray(planSrc) ? planSrc : [];
+    console.info("[CampaTrack sesión] GET /api/data aplicado", {
+      partitionKey,
+      topKeys: Object.keys(bundle),
+      planningRecords: planRecs.length
+    });
     withDraftNotificationsSuppressed(() => {
       hydrateAppStateDraftFromApiBundle(bundle);
       try {
@@ -6716,7 +6811,8 @@ async function cargarDataDesdeBackend(opts = {}) {
       return;
     }
     const res = await fetch(
-      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`
+      `${CAMPATRACK_API_ORIGIN}/api/data?team_id=${encodeURIComponent(partitionKey)}`,
+      CAMPATRACK_FETCH_OPTIONS_GET_API_DATA
     );
     if (!res.ok) {
       console.error("Error cargando data:", `HTTP ${res.status}`);
@@ -6728,6 +6824,13 @@ async function cargarDataDesdeBackend(opts = {}) {
       console.log("No hay data para este usuario");
       return;
     }
+    const planSrcRefresh = bundle.planning_data ?? bundle.planning;
+    const planRecsRefresh =
+      Array.isArray(planSrcRefresh?.records) ? planSrcRefresh.records : Array.isArray(planSrcRefresh) ? planSrcRefresh : [];
+    console.info("[CampaTrack sesión] GET /api/data (dashboard)", {
+      partitionKey,
+      planningRecords: planRecsRefresh.length
+    });
     withDraftNotificationsSuppressed(() => {
       hydrateAppStateDraftFromApiBundle(bundle);
       try {
@@ -6830,7 +6933,7 @@ function campatrackApplyFetchedBundleToRuntime(bundlePayload, opts = {}) {
     }
   }
   try {
-    syncDataOriginalFromPublishedDraft();
+    syncDataOriginalFromPublishedDraft(bundlePayload);
   } catch (_) {}
   try {
     sessionStorage.setItem(SS_SKIP_NEXT_DASHBOARD_BACKEND_FETCH, "1");
@@ -15684,7 +15787,6 @@ if (!document.getElementById("dashboardModule")?.classList.contains("hidden")) {
   renderDashboard();
 }
 
-appDeferredDiskPersistence = true;
 initDraftPublishToolbar();
 resetPublishDraftAfterServerHydrate();
 

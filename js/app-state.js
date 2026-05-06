@@ -107,7 +107,7 @@ export function hydrateAppStateDraftFromApiBundle(bundle) {
     if (key === "planning_data" || key === "planning" || key === "data_general" || key === "relaciones") continue;
     appState.dataDraft[key] = cloneDraft[key];
   }
-  const slice = normalizePlanningSliceFromBundle(bundle.planning_data);
+  const slice = normalizePlanningSliceFromBundle(bundle.planning_data ?? bundle.planning);
   const p = ensurePlanningDraftShape();
   p.records.length = 0;
   slice.records.forEach((r) => p.records.push(r && typeof r === "object" ? { ...r } : r));
@@ -215,7 +215,8 @@ export async function initAppState(options = {}) {
     return;
   }
   const res = await fetch(
-    `${apiOrigin()}/api/data?team_id=${encodeURIComponent(partitionKey)}`
+    `${apiOrigin()}/api/data?team_id=${encodeURIComponent(partitionKey)}`,
+    { cache: "no-store" }
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const row = await res.json();

@@ -106,7 +106,7 @@ async function fetchLatestCampaignRowByPartitionKey(pool, partitionKey) {
       `SELECT TOP (1) user_id, created_at, data
        FROM campaign_data
        WHERE user_id = @key
-       ORDER BY created_at DESC`
+       ORDER BY created_at DESC, id DESC`
     );
   return result.recordset?.[0] ?? null;
 }
@@ -132,7 +132,7 @@ async function fetchLatestCampaignRowLegacySameTeam(pool, canonicalTeamId) {
           )
           OR LTRIM(RTRIM(ISNULL(JSON_VALUE(u.profile_json, '$.teamId'), N''))) = @team
         )
-      ORDER BY cd.created_at DESC
+      ORDER BY cd.created_at DESC, cd.id DESC
     `);
     return result.recordset?.[0] ?? null;
   } catch (e) {
@@ -214,6 +214,21 @@ async function resolveCampaignStorageKey(pool, requestedKey) {
     );
     return raw;
   }
+}
+
+/** Headers HTTP para GET /api/data: evita 304 y respuestas servidas desde caché (proxy/navegador). */
+function setCampaignGetApiDataNoCacheHeaders(res) {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Surrogate-Control": "no-store",
+  });
+}
+
+function campaignGetApiDataNoCacheMiddleware(_req, res, next) {
+  setCampaignGetApiDataNoCacheHeaders(res);
+  next();
 }
 
 function sendCampaignJsonFromRow(res, row) {
@@ -368,6 +383,7 @@ async function syncCampatrackUsersTableFromBundle(pool, bundle) {
 }
 
 const app = express();
+app.disable("etag");
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "25mb" }));
 
@@ -516,6 +532,22 @@ async function handlePostCampaignData(req, res) {
       );
 
     const bundleObj = parseBundleLikeObject(data);
+    try {
+      const keys = bundleObj && typeof bundleObj === "object" ? Object.keys(bundleObj) : [];
+      const nPlan =
+        bundleObj?.planning_data?.records != null && Array.isArray(bundleObj.planning_data.records)
+          ? bundleObj.planning_data.records.length
+          : Array.isArray(bundleObj?.planning)
+            ? bundleObj.planning.length
+            : "n/a";
+      console.log("[CampaTrack API] POST guardado OK", {
+        partition: storageKey,
+        topKeyCount: keys.length,
+        planningRecords: nPlan
+      });
+    } catch (_) {
+      /* ignore */
+    }
     if (bundleObj) {
       try {
         await syncCampatrackUsersTableFromBundle(pool, bundleObj);
@@ -536,7 +568,7 @@ async function handlePostCampaignData(req, res) {
 
 app
   .route("/api/data")
-  .get(async (req, res) => {
+  .get(campaignGetApiDataNoCacheMiddleware, async (req, res) => {
     try {
       const team_id =
         typeof req.query.team_id === "string"
@@ -577,11 +609,9 @@ app
   })
   .post(handlePostCampaignData);
 
-app.post("/api/save-all", handlePostCampaignData);
-
 /**
  * Desenrolla un backup descargado con GET /api/data (`{ data: bundle }`) al objeto `bundle`
- * que se persiste en columna (mismo formato que POST /api/data / save-all).
+ * que se persiste en columna (mismo formato que POST /api/data).
  */
 function normalizeImportBodyForDb(data) {
   if (data == null || typeof data !== "object" || Array.isArray(data)) return data;
@@ -662,7 +692,7 @@ app.post("/api/import-data", async (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`CampaTrack API escuchando en http://localhost:${PORT}`);
-  console.log("Rutas: POST /api/login | GET+POST /api/data | POST /api/save-all | POST /api/import-data");
+  console.log("Rutas: POST /api/login | GET+POST /api/data | POST /api/import-data");
   void getPool().catch((e) => {
     console.error("No se pudo conectar a SQL Server al arranque:", e?.message || e);
   });
