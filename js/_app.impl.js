@@ -393,8 +393,17 @@ let planningMergedRecordsCache = null;
 
 /** Alinea la caché merge con `appState.dataDraft.planning` tras hidratar desde API. */
 function syncPlanningMergedCacheFromAppStateDraft() {
-  const recs = ensurePlanningDraftShape().records;
-  planningMergedRecordsCache = recs.map((r) => (r && typeof r === "object" ? { ...r } : r));
+  const removed = sanitizePlanningDuplicatesInDraftInPlace({ silent: true });
+  if (removed > 0) {
+    try {
+      console.info(`[Planning] Eliminados ${removed} duplicado(s) estructural(es) tras hidratar el bundle.`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  planningMergedRecordsCache = ensurePlanningDraftShape().records.map((r) =>
+    r && typeof r === "object" ? { ...r } : r
+  );
   migratePlanningRowsTeamIds(planningMergedRecordsCache);
 }
 
@@ -496,9 +505,24 @@ function resolveLegacyGeneralTeamIdForSession(rawTeamId, sessionTeamId = getCurr
 function rowBelongsToCurrentTeam(row) {
   const ct = String(getCurrentTeamId()).trim();
   if (!ct) return false;
+  return rowBelongsToTeam(row, ct);
+}
+
+function rowBelongsToTeam(row, teamId) {
+  const ct = String(teamId ?? "").trim();
+  if (!ct) return false;
   const rt = String(normalizeRowTeamId(row)).trim();
   if (!rt) return false;
   return rt === ct;
+}
+
+/** Campaña cuyo centro de costo debe materializarse desde el JSON del Planning (`centroCosto` / `centroCostoId`, etc.). */
+function planningRecordRelevantForCentroImport(rec) {
+  if (!rec) return false;
+  const sessionTeam = String(getCurrentTeamId() || "").trim();
+  if (!sessionTeam) return !String(normalizeRowTeamId(rec)).trim();
+  if (rowBelongsToCurrentTeam(rec)) return true;
+  return !String(normalizeRowTeamId(rec)).trim();
 }
 
 /** Filas del borrador que deben fusionarse en el cache publicado: equipo de sesión + filas sin teamId (se estampan al publicar). */
@@ -543,6 +567,161 @@ function mergeRowsByTeamId(fullBase, memoryRows, teamId, getTeamIdFromRow) {
     return tr;
   });
   return others.concat(stamped);
+}
+
+/**
+ * Llave estable para comparar “misma configuración” de campaña (sin fechas): tipo · programa · plataforma · intake · tracking.
+ */
+function planningStructuralKey(record) {
+  if (!record || typeof record !== "object") return "";
+  const parts = [
+    String(record.tipo ?? "").trim().toLowerCase(),
+    String(record.programa ?? "").trim().toLowerCase(),
+    String(record.plataforma ?? "").trim().toLowerCase(),
+    String(record.intake ?? "").trim().toLowerCase(),
+    String(record.tracking ?? "").trim().toLowerCase()
+  ];
+  return parts.join("\u241e");
+}
+
+/** Identidad completa típico “duplicado real” (config + vigencia ISO). */
+function planningExactFingerprint(record) {
+  if (!record || typeof record !== "object") return "";
+  return (
+    `${planningStructuralKey(record)}\u241e${String(record.fechaInicio ?? "").trim()}\u241e${String(record.fechaFin ?? "").trim()}`
+  );
+}
+
+function planningMergedRowDedupeScore(record, sessionTeamId) {
+  let sc = 0;
+  const tid = String(sessionTeamId || "").trim();
+  const rt = String(normalizeRowTeamId(record) || "").trim();
+  if (tid && rt === tid) sc += 1_000_000;
+  else if (!rt) sc += 50_000;
+  else sc += 10_000;
+  const p = Number(record?.presupuesto) || 0;
+  sc += Math.min(p, 1e12) / 1e6;
+  const idNum = Number(record?.id);
+  if (Number.isFinite(idNum)) sc += idNum / (Number.MAX_SAFE_INTEGER / 1000);
+  return sc;
+}
+
+/**
+ * Elimina filas repetidas tras merges defectuosos: mismo id, o mismo huella exacta (config + fechas).
+ * Conserva preferentemente la fila con equipo de sesión, presupuesto y datos más informados.
+ * @returns {typeof planningDraftRecords()}
+ */
+function sanitizeStructuralDuplicatePlanningRows(records, sessionTeamId) {
+  const raw = Array.isArray(records) ? records.filter((r) => r && typeof r === "object") : [];
+  if (!raw.length) return [];
+
+  const list = raw.map((r) => ({ ...r }));
+  list.sort(
+    (a, b) => planningMergedRowDedupeScore(b, sessionTeamId) - planningMergedRowDedupeScore(a, sessionTeamId)
+  );
+
+  const seenFp = new Set();
+  const seenId = new Set();
+  const out = [];
+  for (const r of list) {
+    const sk = planningStructuralKey(r);
+    if (!sk) continue;
+    const fp = planningExactFingerprint(r);
+    const rid = r.id != null ? String(r.id).trim() : "";
+    if (rid && seenId.has(rid)) continue;
+    if (seenFp.has(fp)) continue;
+    if (rid) seenId.add(rid);
+    seenFp.add(fp);
+    out.push(r);
+  }
+
+  /** Reindexar unicidad estable de ids (conserva valores únicos, re-emite colisionados). */
+  ensurePlanningArrayStableUniqueIds(out);
+  return out;
+}
+
+/**
+ * Fusion Planning: reemplazo atómico de la partición del equipo en curso + fichas nuevas/desde servidor,
+ * eliminando filas huérfanas sin teamId que el merge genérico dejaba coexistiendo con la misma campaña ya asignada a equipo (duplicados visibles).
+ *
+ * Conserva todas las demás particiones intactas en `fullBase`.
+ */
+function mergePlanningDraftIntoMergeCache(fullBase, draftRowsForSession, sessionTeamId) {
+  const tid = String(sessionTeamId || "").trim();
+  const base = Array.isArray(fullBase) ? fullBase : [];
+  const mem = Array.isArray(draftRowsForSession) ? draftRowsForSession : [];
+
+  const stamped = mem.map((r) => {
+    const tr = r && typeof r === "object" ? { ...r } : r;
+    if (tr && typeof tr === "object" && tid) tr.teamId = tid;
+    return tr;
+  });
+
+  const draftIds = new Set(
+    stamped.map((r) => (r && r.id != null ? String(r.id).trim() : "")).filter(Boolean)
+  );
+
+  const keptBase = [];
+  for (const r of base) {
+    if (!r || typeof r !== "object") continue;
+    const rid = r.id != null ? String(r.id).trim() : "";
+    const rt = String(normalizeRowTeamId(r) || "").trim();
+    if (rid && draftIds.has(rid)) continue;
+    if (tid && rt === tid) continue;
+    keptBase.push(r);
+  }
+
+  return sanitizeStructuralDuplicatePlanningRows(keptBase.concat(stamped), tid || getCurrentTeamId());
+}
+
+/** Devuelve filas saneadas dentro del borrador Planning y cuenta eliminaciones. */
+function sanitizePlanningDuplicatesInDraftInPlace(opts = {}) {
+  const silent = opts.silent === true;
+  const tid = String(getCurrentTeamId() || "").trim();
+  const draft = ensurePlanningDraftShape().records;
+  const before = draft.length;
+  const next = sanitizeStructuralDuplicatePlanningRows(draft.slice(), tid);
+  const removed = Math.max(0, before - next.length);
+  if (removed && !silent) {
+    registrarAuditoria({
+      modulo: "planning",
+      accion: "editar",
+      campo: "sanitize_duplicados_planning",
+      valorAnterior: { filasAntes: before },
+      valorNuevo: { filasDespues: next.length, eliminadas: removed },
+      descripcion: `Limpieza de duplicados estructural en Planning (draft): ${removed} fila(s) eliminada(s).`
+    });
+  }
+  draft.length = 0;
+  next.forEach((row) => draft.push(row));
+  return removed;
+}
+
+async function confirmSanitizePlanningDuplicatesFromToolbar() {
+  const cur = ensurePlanningDraftShape().records.map((r) => (typeof r === "object" ? { ...r } : r));
+  const tid = String(getCurrentTeamId() || "").trim();
+  const sanitized = sanitizeStructuralDuplicatePlanningRows(cur, tid);
+  const removed = Math.max(0, cur.length - sanitized.length);
+  if (removed <= 0) {
+    showCampatrackToast("No se encontraron duplicados estructuralmente idénticos en el borrador.", "info");
+    return;
+  }
+  const okExtra = await showAppDialog({
+    message:
+      `Se pueden eliminar ${removed} fila(s) redundantes:\n• misma combinación tipo · programa · plataforma · intake · tracking\n• mismas fechas inicio/fin ISO\n• o mismo id repetido por merges antiguos\n\n` +
+      `Se conservará la copia mejor priorizada (equipo de sesión, presupuesto e id).\n¿Aplicar en el borrador y quedar listo para Publicar?`,
+    primaryText: "Sí, limpiar duplicados",
+    secondaryText: "Cancelar",
+    showSecondary: true
+  });
+  if (!okExtra) return;
+  sanitizePlanningDuplicatesInDraftInPlace({ silent: false });
+  rebuildPlanningTable();
+  persistPlanningData();
+  showCampatrackToast(
+    `Se eliminaron ${removed} duplicado(s) en Planning. Quedan en el borrador hasta Publicar.`,
+    "success"
+  );
 }
 
 function readParsedPlanningPayloadFromDisk() {
@@ -620,11 +799,10 @@ function recomputePlanningMergedCacheFromRecords() {
     Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length > 0
       ? planningMergedRecordsCache.slice()
       : readParsedPlanningPayloadFromDisk().rows;
-  planningMergedRecordsCache = mergeRowsByTeamId(
+  planningMergedRecordsCache = mergePlanningDraftIntoMergeCache(
     base,
     planningDraftRowsForPlanningMerge(),
-    tid,
-    normalizeRowTeamId
+    tid
   );
 }
 
@@ -679,15 +857,10 @@ function getPlanningRowByIdFromMergedCache(id) {
 }
 
 function mergeConsumoForPersist() {
-  const tid = getCurrentTeamId();
-  const disk = readFullConsumoFromDisk();
-  const out = { ...disk };
-  for (const k of Object.keys(out)) {
-    const rec = getPlanningRowByIdFromMergedCache(k);
-    if (rec && String(normalizeRowTeamId(rec)) === tid) delete out[k];
-  }
-  Object.assign(out, consumoPorCampaña);
-  return out;
+  /* `consumo_por_campaña` ya no forma parte del bundle publicado (se deriva del Planning).
+   * Se mantiene el objeto memoria solo por compatibilidad con código legacy que lo leyera. */
+  syncConsumoFromRecords();
+  return {};
 }
 const BITACORA_TIPO_OPTIONS = ["MA", "SE", "PE", "MBA", "DI", "DO", "Charla", "Webinar", "Alcance"];
 
@@ -770,19 +943,14 @@ function persistCentrosCostos() {
 }
 
 function persistConsumoPorCampaña() {
-  if (shouldDeferDiskPersistence()) return;
-  try {
-    appMemoryKV.setItem(LS_CONSUMO_CAMPANA, JSON.stringify(mergeConsumoForPersist()));
-  } catch (err) {
-    console.warn("No se pudo guardar consumo_por_campaña", err);
-  }
+  syncConsumoFromRecords();
 }
 
 function hydratarCentrosCostos() {
   try {
     const fromDraft = appState.dataDraft?.cc_data;
+    centrosCostos.length = 0;
     if (fromDraft && typeof fromDraft === "object" && Array.isArray(fromDraft.centros)) {
-      centrosCostos.length = 0;
       fromDraft.centros.forEach((r) => {
         if (r && r.id != null) centrosCostos.push(normalizeCentroCostoRow(r));
       });
@@ -793,76 +961,145 @@ function hydratarCentrosCostos() {
         if (m) maxN = Math.max(maxN, Number(m[1]));
       });
       centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN + 1);
-      return;
     }
-    const raw = appMemoryKV.getItem("centro_costos") || appMemoryKV.getItem(LS_CC_DATA) || appMemoryKV.getItem("centros_costos");
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    centrosCostos.length = 0;
-    if (Array.isArray(data)) {
-      data.forEach((r) => {
-        if (r && r.id != null) centrosCostos.push(normalizeCentroCostoRow(r));
-      });
-    } else if (data && typeof data === "object" && Array.isArray(data.centros)) {
-      data.centros.forEach((r) => {
-        if (r && r.id != null) centrosCostos.push(normalizeCentroCostoRow(r));
-      });
-      if (Number.isFinite(Number(data.seq))) centroCostoIdSeq = Math.max(centroCostoIdSeq, Number(data.seq));
-    }
-    let maxN = 0;
-    centrosCostos.forEach((r) => {
-      const m = String(r.id).match(/^cc_(\d+)$/i);
-      if (m) maxN = Math.max(maxN, Number(m[1]));
-    });
-    centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN + 1);
   } catch (err) {
-    console.warn("No se pudo cargar cc_data", err);
+    console.warn("No se pudo cargar cc_data desde el borrador", err);
   }
 }
 
+/**
+ * Centro de costo persistido en `cc_data`: solo identidad, nombre visible y techo manual.
+ * (Campos legacy `agrupador` / `nombreProyecto` se migran a `nombre`.)
+ */
 function normalizeCentroCostoRow(r) {
   const tidRaw = r?.teamId != null ? String(r.teamId).trim() : "";
   const teamId = tidRaw ? resolveCampatrackTeamId(tidRaw) || tidRaw : "";
+  const nombreLegacy = String(r.nombre ?? r.agrupador ?? "").trim();
+  const nombreExtra = String(r.nombreProyecto ?? "").trim();
+  const nombre = nombreLegacy || nombreExtra || "";
   return {
     id: String(r.id),
-    agrupador: String(r.agrupador ?? ""),
-    nombreProyecto: String(r.nombreProyecto ?? ""),
-    nombreCuenta: String(r.nombreCuenta ?? ""),
-    descripcionServicio: String(r.descripcionServicio ?? ""),
+    nombre,
     inversionTotal: Math.max(0, Number(r.inversionTotal) || 0),
     teamId
   };
 }
 
+function getCentroCostoDisplayName(cc) {
+  if (!cc) return "";
+  const n = String(cc.nombre ?? cc.agrupador ?? "").trim();
+  return n || String(cc.id || "").trim();
+}
+
 function getCentroCostoKey(cc) {
-  return String(cc?.agrupador ?? "").trim();
+  return getCentroCostoDisplayName(cc);
 }
 
 function resolveCentroCostoByValue(value) {
   const v = String(value ?? "").trim();
   if (!v) return null;
-  const byAgrupador = centrosCostos.find((c) => getCentroCostoKey(c) === v);
-  if (byAgrupador) return byAgrupador;
-  // Compatibilidad con registros legacy que guardaban id interno.
-  return centrosCostos.find((c) => String(c.id) === v) || null;
+  const byId = centrosCostos.find((c) => String(c.id) === v);
+  if (byId) return byId;
+  const vl = v.toLowerCase();
+  return (
+    centrosCostos.find((c) => String(c.nombre || c.agrupador || "").trim().toLowerCase() === vl) || null
+  );
 }
 
+/** Valor persistido en Planning (`centroCosto` / `centroCostoId`): siempre id estable del centro. */
 function normalizeCentroCostoSelectionValue(value) {
   const cc = resolveCentroCostoByValue(value);
-  return cc ? getCentroCostoKey(cc) : String(value ?? "").trim();
+  return cc ? String(cc.id) : String(value ?? "").trim();
+}
+
+function planningRecordCentroRefRaw(record) {
+  if (!record) return "";
+  const legacy = record.centro_costo ?? record.CentroCosto ?? record.centroCostoNombre;
+  const a = record.centroCosto ?? legacy;
+  const b = record.centroCostoId ?? record.centroCostoID;
+  const s =
+    a !== undefined && a !== null && String(a).trim() !== ""
+      ? String(a).trim()
+      : String(b ?? "").trim();
+  return s;
+}
+
+function planningRecordCanonicalCentroId(record) {
+  const raw = planningRecordCentroRefRaw(record);
+  if (!raw) return "";
+  const cc = resolveCentroCostoByValue(raw);
+  return cc ? String(cc.id) : "";
 }
 
 function recordUsesCentroCostoRow(record, cc) {
   if (!record || !cc) return false;
-  const raw = String(record.centroCostoId || "").trim();
-  if (!raw) return false;
-  const resolved = resolveCentroCostoByValue(raw);
-  if (!resolved) return false;
-  return String(resolved.id) === String(cc.id);
+  return planningRecordCanonicalCentroId(record) === String(cc.id);
 }
 
 function getRecordsLinkedToCentroCostoRow(cc) {
   return planningDraftRecords().filter((r) => recordUsesCentroCostoRow(r, cc));
+}
+
+/** Nombre por defecto al crear una bolsa materializada desde referencias solo en Planning. */
+function deriveNombreCentroImportadoDesdePlanning(rawRef, idCanon) {
+  const raw = String(rawRef || "").trim();
+  const id = String(idCanon || "").trim();
+  if (/^cc_\d+$/i.test(id) && (!raw || raw === id)) return id;
+  if (raw && raw.localeCompare(id, undefined, { sensitivity: "accent" }) !== 0) return raw;
+  return id || raw || "Centro de costo";
+}
+
+/**
+ * Crea filas en `cc_data` leyendo el centro elegido en cada campaña del Planning (JSON:
+ * `centroCosto`, `centroCostoId`, o claves legacy como `centro_costo`), cuando aún no hay bolsa local.
+ * `inversionTotal` queda 0 hasta que lo edites; el uso se deriva del Planning.
+ * @returns {number} Cuántos centros nuevos se añadieron.
+ */
+function ensureCentrosCostosRowsFromPlanningAssignments() {
+  const sessionTeam = String(getCurrentTeamId() || "").trim();
+
+  /** @type {Set<string>} */
+  const provisional = new Set();
+  let added = 0;
+
+  planningDraftRecords()
+    .filter((r) => planningRecordRelevantForCentroImport(r))
+    .forEach((rec) => {
+      const raw = planningRecordCentroRefRaw(rec);
+      const v = String(raw || "").trim();
+      if (!v) return;
+      if (resolveCentroCostoByValue(v)) return;
+
+      const id = String(normalizeCentroCostoSelectionValue(v) || v).trim();
+      if (!id) return;
+      if (provisional.has(id)) return;
+      if (centrosCostos.some((c) => String(c.id) === id)) return;
+
+      const teamRow = String(normalizeRowTeamId(rec) || sessionTeam).trim();
+      const tid = resolveCampatrackTeamId(teamRow) || teamRow || sessionTeam;
+
+      centrosCostos.push(
+        normalizeCentroCostoRow({
+          id,
+          nombre: deriveNombreCentroImportadoDesdePlanning(v, id),
+          inversionTotal: 0,
+          teamId: tid
+        })
+      );
+      provisional.add(id);
+      added += 1;
+    });
+
+  if (added > 0) {
+    let maxN = 0;
+    centrosCostos.forEach((r) => {
+      const m = String(r.id).match(/^cc_(\d+)$/i);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    });
+    if (maxN > 0) centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN + 1);
+    persistCentrosCostos();
+  }
+  return added;
 }
 
 /**
@@ -891,12 +1128,11 @@ function getPlanningRecordConsumedInvestment(rec) {
 }
 
 function getUsedInversionCentro(centroId, excludeRecordId = null) {
-  const selectedKey = normalizeCentroCostoSelectionValue(centroId);
-  if (!selectedKey) return 0;
+  const cid = normalizeCentroCostoSelectionValue(centroId);
+  if (!cid) return 0;
   return planningDraftRecords().reduce((sum, r) => {
     if (excludeRecordId != null && samePlanningRecordId(r.id, excludeRecordId)) return sum;
-    const recordKey = normalizeCentroCostoSelectionValue(r.centroCostoId || "");
-    if (recordKey !== selectedKey) return sum;
+    if (planningRecordCanonicalCentroId(r) !== cid) return sum;
     return sum + getPlanningRecordConsumedInvestment(r);
   }, 0);
 }
@@ -905,7 +1141,7 @@ function getSaldoDisponibleCentro(centroId, excludeRecordId = null) {
   const cc = resolveCentroCostoByValue(centroId);
   if (!cc) return 0;
   const total = Number(cc.inversionTotal) || 0;
-  return Math.max(0, total - getUsedInversionCentro(getCentroCostoKey(cc), excludeRecordId));
+  return Math.max(0, total - getUsedInversionCentro(cc.id, excludeRecordId));
 }
 
 function validateCentroCostoPresupuesto(ccId, budget, excludeRecordId) {
@@ -936,7 +1172,7 @@ function syncConsumoFromRecords() {
     delete consumoPorCampaña[k];
   });
   planningDraftRecords().forEach((rec) => {
-    const ccKey = normalizeCentroCostoSelectionValue(rec.centroCostoId || "");
+    const ccKey = planningRecordCanonicalCentroId(rec);
     if (!ccKey) return;
     const s = parseDateInput(rec.fechaInicio);
     const e = parseDateInput(rec.fechaFin);
@@ -962,17 +1198,96 @@ function planningRecordOverlapsYmdRange(rangeStart, rangeEnd, desdeStr, hastaStr
   return true;
 }
 
+/** Días calendario inclusivos entre dos límites (medianoche normalizada mediodía estable). */
+function countInclusiveCalendarDays(rangeStart, rangeEnd) {
+  if (!rangeStart || !rangeEnd || rangeStart > rangeEnd) return 0;
+  const rs = new Date(
+    rangeStart.getFullYear(),
+    rangeStart.getMonth(),
+    rangeStart.getDate(),
+    12,
+    0,
+    0
+  );
+  const re = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), rangeEnd.getDate(), 12, 0, 0);
+  return Math.floor((re - rs) / 86400000) + 1;
+}
+
 /**
- * Agrega inversión mensual del Planning por dimensión.
+ * Reparte lo que cuenta como gasto contra el centro (`getPlanningRecordConsumedInvestment`)
+ * en las 12 columnas Ene–Dic del UI (métricas de años distintos se suman por mes de calendario).
+ *
+ * Opcionalmente recorta por `desde/hasta`; el importe se escala proporcionalmente a los días
+ * de campaña contenidos en el recorte, para que Σ columnas coincida con el gasto reconocido
+ * del periodo sobre esa campaña.
+ *
+ * @returns {number[]|null} 12 valores o null si fuera del alcance
+ */
+function allocatePlanningRecordConsumptionToCalendarMonthColumns(rec, desdeStr, hastaStr) {
+  const s = parseDateInput(rec.fechaInicio);
+  const e = parseDateInput(rec.fechaFin);
+  if (!s || !e || s > e) {
+    const desdeTrim0 = String(desdeStr || "").trim();
+    const hastaTrim0 = String(hastaStr || "").trim();
+    if (desdeTrim0 || hastaTrim0) return null;
+    const tc = getPlanningRecordConsumedInvestment(rec);
+    return tc > 0 ? distributeBudget(tc, Array.from({ length: 12 }, () => 1)) : null;
+  }
+  const desdeTrim = String(desdeStr || "").trim();
+  const hastaTrim = String(hastaStr || "").trim();
+  if (!planningRecordOverlapsYmdRange(s, e, desdeTrim, hastaTrim)) return null;
+
+  let segStart = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 12, 0, 0);
+  let segEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate(), 12, 0, 0);
+  const ds = desdeTrim ? parseDateInput(desdeTrim) : null;
+  const de = hastaTrim ? parseDateInput(hastaTrim) : null;
+  if (ds) {
+    const clipped = new Date(ds.getFullYear(), ds.getMonth(), ds.getDate(), 12, 0, 0);
+    if (segStart < clipped) segStart = clipped;
+  }
+  if (de) {
+    const clipe = new Date(de.getFullYear(), de.getMonth(), de.getDate(), 12, 0, 0);
+    if (segEnd > clipe) segEnd = clipe;
+  }
+  if (segStart > segEnd) return null;
+
+  const totalCons = getPlanningRecordConsumedInvestment(rec);
+  const fullDays = countInclusiveCalendarDays(s, e);
+  const clipDays = countInclusiveCalendarDays(segStart, segEnd);
+  if (fullDays <= 0 || clipDays <= 0) return Array.from({ length: 12 }, () => 0);
+  const pool =
+    hastaTrim || desdeTrim
+      ? Math.max(0, totalCons) * (clipDays / fullDays)
+      : Math.max(0, totalCons);
+  if (pool <= 0) return Array.from({ length: 12 }, () => 0);
+
+  const weights = Array.from({ length: 12 }, () => 0);
+  for (let y = segStart.getFullYear(); y <= segEnd.getFullYear(); y += 1) {
+    for (let m = 0; m < 12; m += 1) {
+      weights[m] += countDaysInMonthIntersection(segStart, segEnd, y, m);
+    }
+  }
+  return distributeBudget(pool, weights);
+}
+
+/**
+ * Desglose mensual derivado solo de Planning en memoria (sin persistencia).
+ * Llama internamente a `aggregatePlanningMonthlyByDimensionForRecords` sobre un subconjunto ya filtrado.
+ */
+function buildCostCenterMonthlyBreakdownFromPlanning(records, dateFilter) {
+  return aggregatePlanningMonthlyByDimensionForRecords(records, dateFilter);
+}
+
+/**
+ * Agrega inversión mensual del Planning por dimensión (subconjunto explícito de filas).
  * @param {{ desde?: string, hasta?: string }} [dateFilter] Si se indica `desde` y/o `hasta` (YYYY-MM-DD), solo cuenta campañas cuyo rango intersecta el filtro.
  */
-function aggregatePlanningMonthlyByDimension(dateFilter) {
+function aggregatePlanningMonthlyByDimensionForRecords(records, dateFilter) {
   const byTipo = new Map();
   const byPlataforma = new Map();
   const byIntake = new Map();
   const desdeStr = dateFilter && String(dateFilter.desde || "").trim();
   const hastaStr = dateFilter && String(dateFilter.hasta || "").trim();
-  const useDateFilter = Boolean(desdeStr || hastaStr);
 
   const addTo = (map, key, monthIdx, val) => {
     const k = String(key || "—").trim() || "—";
@@ -981,24 +1296,53 @@ function aggregatePlanningMonthlyByDimension(dateFilter) {
     row[monthIdx] += val;
   };
 
-  planningDraftRecords().forEach((rec) => {
-    const s = parseDateInput(rec.fechaInicio);
-    const e = parseDateInput(rec.fechaFin);
-    if (!s || !e) return;
-    if (useDateFilter && !planningRecordOverlapsYmdRange(s, e, desdeStr, hastaStr)) return;
-    for (let y = s.getFullYear(); y <= e.getFullYear(); y += 1) {
-      const { monthlyInvestment } = computeMonthlyArraysForRecordWithOverrides(rec, y);
-      for (let m = 0; m < 12; m += 1) {
-        const v = Number(monthlyInvestment[m]) || 0;
-        if (v <= 0) continue;
-        addTo(byTipo, rec.tipo, m, v);
-        addTo(byPlataforma, rec.plataforma, m, v);
-        addTo(byIntake, rec.intake, m, v);
-      }
+  (Array.isArray(records) ? records : []).forEach((rec) => {
+    const monthly = allocatePlanningRecordConsumptionToCalendarMonthColumns(
+      rec,
+      desdeStr ?? "",
+      hastaStr ?? ""
+    );
+    if (!monthly || !monthly.length) return;
+    for (let m = 0; m < 12; m += 1) {
+      const v = Number(monthly[m]) || 0;
+      if (v <= 0) continue;
+      addTo(byTipo, rec.tipo, m, v);
+      addTo(byPlataforma, rec.plataforma, m, v);
+      addTo(byIntake, rec.intake, m, v);
     }
   });
 
   return { byTipo, byPlataforma, byIntake };
+}
+
+/** Agrega inversión mensual de todo el Planning del equipo actual (rangos opcionales). */
+function aggregatePlanningMonthlyByDimension(dateFilter) {
+  return aggregatePlanningMonthlyByDimensionForRecords(
+    planningDraftRecords().filter((r) => planningRecordRelevantForCentroImport(r)),
+    dateFilter
+  );
+}
+
+/**
+ * Filas Planning para las tablas de desglose (tipo / plataforma / intake):
+ * - mismo alcance que el consumo contra bolsas: equipo actual + filas legacy sin `teamId`;
+ * - solo campañas con centro de costo resuelto (`planningRecordCanonicalCentroId`);
+ * - centro: selección/filtro de bolsa o todas las que tienen CC.
+ *
+ * Todo se lee del borrador en memoria (`planningDraftRecords`); persistir servidor sigue en «Publicar».
+ */
+function planningRecordsForCostCenterBreakdown() {
+  const teamRows = planningDraftRecords().filter(
+    (r) => planningRecordRelevantForCentroImport(r) && planningRecordCanonicalCentroId(r)
+  );
+  const fromRowSel = selectedCcRowId ? String(selectedCcRowId).trim() : "";
+  const fromFilter =
+    document.getElementById("ccFilterAgrupador") instanceof HTMLSelectElement
+      ? String(document.getElementById("ccFilterAgrupador").value || "").trim()
+      : "";
+  const centroScope = fromRowSel || fromFilter;
+  if (!centroScope) return teamRows;
+  return teamRows.filter((r) => planningRecordCanonicalCentroId(r) === String(centroScope));
 }
 
 function getCcChartDateFilterFromDom() {
@@ -1011,24 +1355,27 @@ function syncCcAgrupadorFilterOptions() {
   const sel = document.getElementById("ccFilterAgrupador");
   if (!sel) return;
   const cur = sel.value;
-  const keys = [
-    ...new Set(
-      centrosCostos
-        .map((c) => getCentroCostoKey(c))
-        .filter((k) => String(k).trim())
-    )
-  ].sort((a, b) => a.localeCompare(b, "es"));
+  const rows = centrosCostos.filter((c) => rowBelongsToCurrentTeam(c)).sort((a, b) => {
+    const la = getCentroCostoDisplayName(a) || String(a.id);
+    const lb = getCentroCostoDisplayName(b) || String(b.id);
+    return la.localeCompare(lb, "es");
+  });
   sel.innerHTML =
     `<option value="">${escapeHtml("Todos")}</option>` +
-    keys.map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
-  if (keys.includes(cur)) sel.value = cur;
+    rows
+      .map((c) => {
+        const id = String(c.id);
+        const lab = getCentroCostoDisplayName(c) || id;
+        return `<option value="${escapeHtml(id)}">${escapeHtml(lab)}</option>`;
+      })
+      .join("");
+  if (rows.some((c) => String(c.id) === cur)) sel.value = cur;
 }
 
 function centroCostoPasaFiltrosTabla(cc, used, inversionTotal) {
   const agrSel = document.getElementById("ccFilterAgrupador")?.value?.trim() ?? "";
   const estSel = document.getElementById("ccFilterEstado")?.value?.trim() ?? "";
-  const key = getCentroCostoKey(cc);
-  if (agrSel && key !== agrSel) return false;
+  if (agrSel && String(cc.id) !== agrSel) return false;
   const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
   const riesgo = inversionTotal > 0 && pct > 90;
   if (estSel === "riesgo" && !riesgo) return false;
@@ -1052,7 +1399,7 @@ function renderCcKpiStrip() {
   let totalInv = 0;
   let totalUsed = 0;
   let riesgoCount = 0;
-  centrosCostos.forEach((cc) => {
+  centrosCostos.filter((cc) => rowBelongsToCurrentTeam(cc)).forEach((cc) => {
     const inv = Number(cc.inversionTotal) || 0;
     const used = getUsedInversionCentro(cc.id, null);
     totalInv += inv;
@@ -1125,6 +1472,22 @@ function sortCcIntakeKeysForSummary(keys) {
   });
 }
 
+/** Orden estable de tipos de campaña (similar al Planning legible). El resto va alfabético al final. */
+function sortCcTipoKeysForSummary(keys) {
+  const order = ["MA", "SE", "DI", "MBA", "PE", "DO", "ALCANCE", "CHARLA", "WEBINAR"];
+  const rank = (key) => {
+    const k = String(key ?? "").trim().toUpperCase();
+    const ix = order.indexOf(k);
+    return ix >= 0 ? ix : 1000;
+  };
+  return [...keys].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return String(a).localeCompare(String(b), "es");
+  });
+}
+
 function exportCcCentrosCostosCsv() {
   void showAppDialog({
     message: "La exportación a CSV está deshabilitada. Los datos se consolidan en el servidor al publicar.",
@@ -1169,6 +1532,7 @@ async function runDeleteCentroCostoFlowForId(ccId) {
   }
 
   linked.forEach((r) => {
+    r.centroCosto = normalized;
     r.centroCostoId = normalized;
   });
   rebuildPlanningTable();
@@ -1199,6 +1563,7 @@ function renderCcSummaryTable(el, map, opts) {
   };
   const isTipoTable = String(colLabel).toLowerCase() === "tipo";
   const isIntakeTable = String(colLabel).toLowerCase() === "intake";
+  const isPlataformaTable = String(colLabel).toLowerCase() === "plataforma";
   el.classList.toggle("cc-planning-summary--tipo", isTipoTable);
   el.classList.toggle("cc-analytic-monthly-table", Boolean(opts?.analyticStyle));
   let keys = Array.from(map.keys());
@@ -1206,8 +1571,12 @@ function renderCcSummaryTable(el, map, opts) {
     /* orden de inserción del Map (p. ej. Google → Meta → Otros) */
   } else if (isIntakeTable) {
     keys = sortCcIntakeKeysForSummary(keys);
+  } else if (isTipoTable) {
+    keys = sortCcTipoKeysForSummary(keys);
+  } else if (isPlataformaTable) {
+    keys.sort((a, b) => String(a).localeCompare(String(b), "es"));
   } else {
-    keys.sort((a, b) => a.localeCompare(b, "es"));
+    keys.sort((a, b) => String(a).localeCompare(String(b), "es"));
   }
   const monthlyTotals = Array.from({ length: 12 }, () => 0);
   const colCount = 14;
@@ -1227,7 +1596,7 @@ function renderCcSummaryTable(el, map, opts) {
       .join("");
     el.innerHTML =
       head +
-      `<tbody><tr><td class="cc-ps-td-empty" colspan="${colCount}">Sin campañas en Planning o sin inversión distribuida en el rango de fechas.</td></tr></tbody>` +
+      `<tbody><tr><td class="cc-ps-td-empty" colspan="${colCount}">Sin datos para este alcance: no hay campañas con centro de costo asignado, o no hay inversión mensual en el rango de fechas aplicado.</td></tr></tbody>` +
       `<tfoot><tr class="cc-ps-total-row"><th scope="row">TOTAL</th>${totalCells}<td class="cc-ps-td-num">${escapeHtml(formatMoneyCc(0) || "$0")}</td></tr></tfoot>`;
     return;
   }
@@ -1272,13 +1641,16 @@ function renderCentroCostosMainTable() {
       const inversionTotal = Number(cc.inversionTotal) || 0;
       const saldo = Math.max(0, inversionTotal - used);
       const pct = inversionTotal > 0 ? (used / inversionTotal) * 100 : 0;
+      const pctRest = inversionTotal > 0 ? Math.max(0, 100 - pct) : 0;
       const riesgo = inversionTotal > 0 && pct > 90;
       if (!centroCostoPasaFiltrosTabla(cc, used, inversionTotal)) return "";
       totalInversion += inversionTotal;
       totalUsed += used;
       totalSaldo += saldo;
       const idEsc = escapeHtml(cc.id);
+      const nm = getCentroCostoDisplayName(cc);
       const pctStr = `${pct.toFixed(2)}%`;
+      const pctRestStr = `${pctRest.toFixed(2)}%`;
       let barClass = "cc-pct-bar-fill";
       if (pct > 90) barClass += " cc-pct-bar-fill--risk";
       else if (pct > 70) barClass += " cc-pct-bar-fill--warn";
@@ -1286,8 +1658,7 @@ function renderCentroCostosMainTable() {
         ? `<span class="cc-badge cc-badge--riesgo">RIESGO</span>`
         : `<span class="cc-badge cc-badge--ok">OK</span>`;
       return `<tr data-cc-id="${idEsc}">
-        <td contenteditable="true" class="cc-editable" data-cc-field="agrupador">${escapeHtml(cc.agrupador)}</td>
-        <td contenteditable="true" class="cc-editable" data-cc-field="descripcionServicio">${escapeHtml(cc.descripcionServicio)}</td>
+        <td contenteditable="true" class="cc-editable" data-cc-field="nombre">${escapeHtml(nm)}</td>
         <td contenteditable="true" class="cc-editable cc-td-num" data-cc-field="inversionTotal">${escapeHtml(String(cc.inversionTotal))}</td>
         <td class="cc-td-num cc-td-readonly">${escapeHtml(formatMoneyCc(used) || "$0")}</td>
         <td class="cc-td-num cc-td-readonly cc-td-saldo">${escapeHtml(formatMoneyCc(saldo) || "$0")}</td>
@@ -1297,6 +1668,7 @@ function renderCentroCostosMainTable() {
             <span>${escapeHtml(pctStr)}</span>
           </div>
         </td>
+        <td class="cc-td-num cc-td-readonly">${escapeHtml(pctRestStr)}</td>
         <td>${badge}</td>
         <td class="cc-td-actions" data-cc-stop-row-select>
           <div class="cc-dropdown cc-row-dd">
@@ -1312,10 +1684,11 @@ function renderCentroCostosMainTable() {
     .join("");
 
   const totalRow = `<tr class="cc-total-row">
-      <td colspan="2"><strong>TOTAL</strong></td>
+      <td><strong>TOTAL</strong></td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalInversion) || "$0")}</td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalUsed) || "$0")}</td>
       <td class="cc-td-num">${escapeHtml(formatMoneyCc(totalSaldo) || "$0")}</td>
+      <td></td>
       <td></td>
       <td></td>
       <td></td>
@@ -1342,30 +1715,52 @@ function updateCcDeleteRowButtonState() {
 }
 
 function refreshCentroCostosUI() {
+  ensureCentrosCostosRowsFromPlanningAssignments();
+  if (!document.getElementById("ccMainBody")) {
+    populateCentroCostoSelect();
+    return;
+  }
   syncCcAgrupadorFilterOptions();
   renderCcKpiStrip();
   renderCentroCostosMainTable();
-  const agg = aggregatePlanningMonthlyByDimension(getCcChartDateFilterFromDom());
+  const breakdownRows = planningRecordsForCostCenterBreakdown();
+  const agg = buildCostCenterMonthlyBreakdownFromPlanning(breakdownRows, getCcChartDateFilterFromDom());
+  const hintEl = document.getElementById("ccAnalyticsScopeHint");
+  if (hintEl) {
+    const fromRowSel = selectedCcRowId ? String(selectedCcRowId).trim() : "";
+    const fromFilter =
+      document.getElementById("ccFilterAgrupador") instanceof HTMLSelectElement
+        ? String(document.getElementById("ccFilterAgrupador").value || "").trim()
+        : "";
+    const scopeId = fromRowSel || fromFilter;
+    const cc = scopeId ? centrosCostos.find((c) => String(c.id) === String(scopeId)) : null;
+    if (cc) {
+      hintEl.textContent =
+        `Desglose mensual solo con campañas que tienen centro de costo: «${getCentroCostoDisplayName(cc)}».`;
+    } else {
+      hintEl.textContent =
+        "Desglose mensual: solo campañas del equipo con centro de costo asignado; las demás se excluyen.";
+    }
+  }
   renderCcSummaryTable(document.getElementById("ccResumenTipo"), agg.byTipo, {
     colLabel: "Tipo",
-    caption: "Por tipo – inversión mensual",
+    caption: "Por tipo — inversión mensual (Planning)",
     theme: "tipo",
-    omitCaption: true,
+    omitCaption: false,
     analyticStyle: true
   });
-  renderCcSummaryTable(document.getElementById("ccResumenPlataforma"), mergeCcPlataformaMapByFamilia(agg.byPlataforma), {
+  renderCcSummaryTable(document.getElementById("ccResumenPlataforma"), agg.byPlataforma, {
     colLabel: "Plataforma",
-    caption: "Por plataforma – inversión mensual",
+    caption: "Por plataforma — inversión mensual (Planning)",
     theme: "plataforma",
-    omitCaption: true,
-    preserveKeyOrder: true,
+    omitCaption: false,
     analyticStyle: true
   });
   renderCcSummaryTable(document.getElementById("ccResumenIntake"), agg.byIntake, {
     colLabel: "Intake",
-    caption: "Por intake – inversión mensual",
+    caption: "Por intake — inversión mensual (Planning)",
     theme: "intake",
-    omitCaption: true,
+    omitCaption: false,
     analyticStyle: true
   });
   populateCentroCostoSelect();
@@ -1389,26 +1784,108 @@ function recalcularCentroCostos() {
   refreshCentroCostosUI();
 }
 
+/**
+ * Quita todo centro de costo en las campañas Planning del equipo actual y elimina las bolsas (cc_data)
+ * de ese mismo equipo. Irreversible en el borrador (revertir solo con Descartar o copia anterior).
+ */
+async function runResetCompletoCentroCostosParaEquipoActual() {
+  const tid = String(getCurrentTeamId() || "").trim();
+  if (!tid) {
+    void showAppDialog({
+      message: "No hay equipo de sesión. Inicia sesión con un equipo para limpiar Centro de costos.",
+      primaryText: "Entendido",
+      showSecondary: false
+    });
+    return;
+  }
+
+  const bolsaQty = centrosCostos.filter((c) => rowBelongsToCurrentTeam(c)).length;
+  let campCc = 0;
+  planningDraftRecords()
+    .filter((r) => rowBelongsToCurrentTeam(r))
+    .forEach((r) => {
+      if (String(planningRecordCentroRefRaw(r) || "").trim()) campCc += 1;
+    });
+
+  const ok = await showAppDialog({
+    message:
+      `Vas a reiniciar Centro de costos para el equipo actual.\n\n` +
+      `• Se eliminarán ${bolsaQty} bolsa(s) guardada(s).\n` +
+      `• Se quitarán los campos centro de costo en ${campCc} campaña(s) del Planning que los tengan.\n\n` +
+      `Las campañas y sus montos siguen igual; solo se quita la relación al centro.\nLos cambios quedan en el borrador hasta que publiques.\n\n¿Continuar?`,
+    primaryText: "Sí, limpiar todo",
+    secondaryText: "Cancelar",
+    showSecondary: true,
+    primaryDanger: true
+  });
+  if (!ok) return;
+
+  planningDraftRecords()
+    .filter((r) => rowBelongsToCurrentTeam(r))
+    .forEach((r) => {
+      r.centroCosto = "";
+      r.centroCostoId = "";
+    });
+
+  for (let i = centrosCostos.length - 1; i >= 0; i -= 1) {
+    if (rowBelongsToCurrentTeam(centrosCostos[i])) centrosCostos.splice(i, 1);
+  }
+
+  let maxN = 0;
+  centrosCostos.forEach((r) => {
+    const m = String(r.id).match(/^cc_(\d+)$/i);
+    if (m) maxN = Math.max(maxN, Number(m[1]));
+  });
+  centroCostoIdSeq = Math.max(centroCostoIdSeq, maxN > 0 ? maxN + 1 : 1);
+
+  selectedCcRowId = null;
+
+  registrarAuditoria({
+    modulo: "planning",
+    accion: "editar",
+    campo: "centro_costo_reset_equipo",
+    valorAnterior: { bolsasEquipo: bolsaQty, campanasConCc: campCc },
+    valorNuevo: { bolsasEquipo: 0, campanasSinCc: "todas_equipo_actual" },
+    descripcion:
+      `Reset Centro de costos (equipo): ${bolsaQty} bolsa(s) eliminada(s), ${campCc} campaña(s) sin centro asignado.`
+  });
+
+  persistCentrosCostos();
+  rebuildPlanningTable();
+  persistPlanningData();
+  syncConsumoFromRecords();
+  persistConsumoPorCampaña();
+  populateCentroCostoSelect();
+  refreshCentroCostosUI();
+
+  void showAppDialog({
+    message:
+      "Listo: Planning sin centro de costo y tabla de bolsas vacía para tu equipo.\nRecuerda publicar si quieres guardarlo en el servidor.",
+    primaryText: "OK",
+    showSecondary: false
+  });
+}
+
 function populateCentroCostoSelect() {
+  ensureCentrosCostosRowsFromPlanningAssignments();
   const sel = document.getElementById("centroCostoSelect");
   if (!sel) return;
-  const cur = normalizeCentroCostoSelectionValue(sel.value);
+  const curId = normalizeCentroCostoSelectionValue(sel.value);
   const seen = new Set();
   const options = centrosCostos
     .filter((c) => rowBelongsToCurrentTeam(c))
     .map((c) => {
-      const agrupador = getCentroCostoKey(c);
-      if (!agrupador || seen.has(agrupador)) return "";
-      seen.add(agrupador);
-      const extra = String(c.nombreProyecto || "").trim();
-      const label = extra ? `${agrupador} (${extra})` : agrupador;
-      return `<option value="${escapeHtml(agrupador)}">${escapeHtml(label)}</option>`;
+      const id = String(c.id);
+      if (!id || seen.has(id)) return "";
+      seen.add(id);
+      const label = getCentroCostoDisplayName(c) || id;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
     })
     .filter(Boolean)
     .join("");
   sel.innerHTML =
     `<option value="">${escapeHtml("Sin centro de costo")}</option>` + options;
-  if (seen.has(cur)) sel.value = cur;
+  if (curId && seen.has(curId)) sel.value = curId;
 }
 
 function updateCentroCostoSaldoHint() {
@@ -1439,6 +1916,7 @@ function initCentroCostosModule() {
   const moreBtn = document.getElementById("ccMoreActionsBtn");
   const morePanel = document.getElementById("ccMoreActionsPanel");
   const moreDel = document.getElementById("ccMoreDeleteBtn");
+  const resetModBtn = document.getElementById("ccResetModuloBtn");
 
   selCc?.addEventListener("change", () => updateCentroCostoSaldoHint());
 
@@ -1449,10 +1927,7 @@ function initCentroCostosModule() {
     centrosCostos.push(
       normalizeCentroCostoRow({
         id,
-        agrupador: "",
-        nombreProyecto: "",
-        nombreCuenta: "",
-        descripcionServicio: "",
+        nombre: "",
         inversionTotal: 0,
         teamId: tid
       })
@@ -1464,7 +1939,7 @@ function initCentroCostosModule() {
   editBtn?.addEventListener("click", () => {
     if (!selectedCcRowId) return;
     const rid = String(selectedCcRowId).replace(/["\\]/g, "");
-    const cell = tbody?.querySelector(`tr[data-cc-id="${rid}"] td[data-cc-field="agrupador"]`);
+    const cell = tbody?.querySelector(`tr[data-cc-id="${rid}"] td[data-cc-field="nombre"]`);
     if (cell instanceof HTMLElement) {
       cell.focus();
       const range = document.createRange();
@@ -1508,6 +1983,12 @@ function initCentroCostosModule() {
     ev.stopPropagation();
     closeAllCcUiDropdowns();
     void runDeleteCentroCostoFlowForId(selectedCcRowId);
+  });
+
+  resetModBtn?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeAllCcUiDropdowns();
+    void runResetCompletoCentroCostosParaEquipoActual();
   });
 
   document.addEventListener("click", (ev) => {
@@ -1583,6 +2064,9 @@ function initCentroCostosModule() {
       const n = limpiarNumero(raw);
       cc.inversionTotal = Number.isFinite(n) ? Math.max(0, n) : 0;
       td.textContent = String(cc.inversionTotal);
+    } else if (field === "nombre") {
+      cc.nombre = raw;
+      td.textContent = getCentroCostoDisplayName(cc);
     } else {
       cc[field] = raw;
     }
@@ -1609,15 +2093,16 @@ function initCentroCostosTabs() {
     const isDesglose = which === "desglose";
     paneDesglose.classList.toggle("hidden", !isDesglose);
     paneDetalle.classList.toggle("hidden", isDesglose);
-    tabDesglose.classList.toggle("tab-active", isDesglose);
-    tabDetalle.classList.toggle("tab-active", !isDesglose);
+    tabDesglose.classList.toggle("data-subtab-active", isDesglose);
+    tabDetalle.classList.toggle("data-subtab-active", !isDesglose);
     tabDesglose.setAttribute("aria-selected", isDesglose ? "true" : "false");
     tabDetalle.setAttribute("aria-selected", isDesglose ? "false" : "true");
+    if (isDesglose) refreshCentroCostosUI();
   };
 
   tabDesglose.addEventListener("click", () => setActive("desglose"));
   tabDetalle.addEventListener("click", () => setActive("detalle"));
-  setActive("desglose");
+  setActive("detalle");
 }
 
 /**
@@ -1627,6 +2112,7 @@ function initCentroCostosTabs() {
  * de cada campaña, el agregado por centro y por mes queda consistente tras cambiar CC.
  */
 function syncCentroCostosYConsumoDesdePlanning() {
+  ensureCentrosCostosRowsFromPlanningAssignments();
   syncConsumoFromRecords();
   persistConsumoPorCampaña();
   recalcularCentroCostos();
@@ -1734,6 +2220,7 @@ function diffPlanningRecordForAudit(recordId, before, after) {
     "intake",
     "plataforma",
     "tracking",
+    "centroCosto",
     "centroCostoId"
   ];
   for (const k of keys) {
@@ -1801,13 +2288,14 @@ function runWithDiskPersistenceEnabled(fn) {
 function buildMemorySnapshotForPublish() {
   syncCcBitacoraModeloDraftFromRuntime();
   recomputePlanningMergedCacheFromRecords();
+  migratePlanningRowsTeamIds(planningMergedRecordsCache || []);
+  reloadPlanningWorkingSliceFromCache();
   refreshTeamScopedDataCachesForSnapshot();
   const planningSnap = JSON.parse(JSON.stringify(planningMergedRecordsCache && planningMergedRecordsCache.length ? planningMergedRecordsCache : planningDraftRecords()));
   return {
     planning_data: { records: planningSnap, recordIdSeq: getPlanningRecordIdSeq() },
     cc_data: { centros: JSON.parse(JSON.stringify(centrosCostos)), seq: centroCostoIdSeq },
     catalogos_sistema: JSON.parse(JSON.stringify(catalogosSistema)),
-    consumo_por_campaña: JSON.parse(JSON.stringify(mergeConsumoForPersist())),
     programs: JSON.parse(JSON.stringify(programs)),
     bitacora_data: JSON.parse(JSON.stringify(bitacoraData)),
     data_general: serializeDataReal(ensureDataGeneralDraftShape()),
@@ -1847,14 +2335,14 @@ function applyMemorySnapshotFromBundle(snap) {
     migratePlanningRowsTeamIds(rows);
     const distinctTeams = new Set(rows.map(normalizeRowTeamId));
     if (distinctTeams.size > 1) {
-      planningMergedRecordsCache = rows;
+      planningMergedRecordsCache = sanitizeStructuralDuplicatePlanningRows(rows, getCurrentTeamId());
     } else {
       const tid = getCurrentTeamId();
       const base =
         Array.isArray(planningMergedRecordsCache) && planningMergedRecordsCache.length > 0
           ? planningMergedRecordsCache.slice()
           : readParsedPlanningPayloadFromDisk().rows;
-      planningMergedRecordsCache = mergeRowsByTeamId(base, rows, tid, normalizeRowTeamId);
+      planningMergedRecordsCache = mergePlanningDraftIntoMergeCache(base, rows, tid);
     }
     if (Number.isFinite(Number(snap.planning_data.recordIdSeq)))
       setPlanningRecordIdSeq(Math.max(1, Math.round(Number(snap.planning_data.recordIdSeq))));
@@ -1869,12 +2357,6 @@ function applyMemorySnapshotFromBundle(snap) {
   if (snap.catalogos_sistema && typeof snap.catalogos_sistema === "object") {
     catalogosSistema = snap.catalogos_sistema;
     ensureCatalogosSistemaShape();
-  }
-  if (snap.consumo_por_campaña && typeof snap.consumo_por_campaña === "object") {
-    Object.keys(consumoPorCampaña).forEach((k) => {
-      delete consumoPorCampaña[k];
-    });
-    Object.assign(consumoPorCampaña, snap.consumo_por_campaña);
   }
   if (Array.isArray(snap.programs)) {
     programs.length = 0;
@@ -2015,11 +2497,6 @@ function flushAllPersistedStateToDisk() {
       writePlanningPayloadToLocalStorage(mergedPlan, getPlanningRecordIdSeq());
     } catch (err) {
       console.warn("flush planning", err);
-    }
-    try {
-      appMemoryKV.setItem(LS_CONSUMO_CAMPANA, JSON.stringify(mergeConsumoForPersist()));
-    } catch (err) {
-      console.warn("flush consumo", err);
     }
     syncCcBitacoraModeloDraftFromRuntime();
     saveCatalogosSistema();
@@ -2290,6 +2767,7 @@ function persistPlanningData(opts = {}) {
   recomputePlanningMergedCacheFromRecords();
   const merged = planningMergedRecordsCache || planningDraftRecords().slice();
   migratePlanningRowsTeamIds(merged);
+  reloadPlanningWorkingSliceFromCache();
   const maxMergedId = merged.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0);
   if (Number.isFinite(Number(getPlanningRecordIdSeq()))) {
     setPlanningRecordIdSeq(Math.max(Math.max(1, Math.round(Number(getPlanningRecordIdSeq()))), maxMergedId + 1));
@@ -2328,7 +2806,7 @@ function hydratarPlanningData() {
     } else {
       setPlanningRecordIdSeq(Math.max(1, Number(getPlanningRecordIdSeq()) || 1));
     }
-    planningMergedRecordsCache = allRows;
+    planningMergedRecordsCache = sanitizeStructuralDuplicatePlanningRows(allRows, getCurrentTeamId());
     reloadPlanningWorkingSliceFromCache();
     return idsChanged || teamMigrated;
   } catch (err) {
@@ -3468,7 +3946,7 @@ function getFormValues() {
     totalBudget: Number(formData.get("totalBudget") || 0),
     cplTarget: isAlcance ? 0 : Number(formData.get("cplTarget") || 0),
     targetLeads: isAlcance ? 0 : Math.max(0, Math.round(Number(formData.get("targetLeads") || 0))),
-    centroCostoId: normalizeCentroCostoSelectionValue(centroCostoRaw)
+    centroCosto: normalizeCentroCostoSelectionValue(centroCostoRaw)
   };
 }
 
@@ -3526,16 +4004,55 @@ function showFormError(msg) {
   formError.classList.remove("hidden");
 }
 
+/** @deprecated Comparación rápida de “misma configuración dimensional” sin fechas. Preferir planningStructuralKey(). */
 function isDuplicateRecord(candidate, excludeId = null) {
-  return planningDraftRecords().some(
-    (r) =>
-      (excludeId == null || !samePlanningRecordId(r.id, excludeId)) &&
-      r.tipo === candidate.tipo &&
-      r.programa === candidate.programa &&
-      r.plataforma === candidate.plataforma &&
-      r.tracking === candidate.tracking &&
-      r.intake === candidate.intake
-  );
+  const sk = planningStructuralKey(candidate);
+  if (!sk) return false;
+  return planningDraftRecords().some((r) => {
+    if (excludeId != null && samePlanningRecordId(r.id, excludeId)) return false;
+    return planningStructuralKey(r) === sk;
+  });
+}
+
+/**
+ * Reglas anti-duplicado y anti-solape para campañas equivalentes:
+ * mismo tipo · programa · plataforma · intake · tracking.
+ * • Charla/Webinar: solo bloquea solape de rangos si la configuración coincide.
+ * • Alcance y otros tipos sin cruce fuerte entre intakes: permiten coexistencia salvo fingerprint idéntico o solape sobre misma configuración.
+ */
+function getPlanningRecordIntegrityConflictMessage(candidate, excludeId = null) {
+  if (!candidate || typeof candidate !== "object") return "";
+  const t = String(candidate.tipo ?? "").trim();
+  const s = parseDateInput(candidate.fechaInicio);
+  const e = parseDateInput(candidate.fechaFin);
+
+  if (planningTipoCharlaOWebinar(t)) {
+    if (!s || !e) return "";
+    if (hasCharlaWebinarMismaConfigSolapeFechas(candidate, excludeId)) {
+      return "Ya existe una campaña Charla/Webinar con la misma configuración y un rango de fechas que se solapa.";
+    }
+    return "";
+  }
+
+  if (!s || !e || e < s) return "";
+
+  const sk = planningStructuralKey(candidate);
+  if (!sk) return "";
+
+  for (const r of planningDraftRecords()) {
+    if (excludeId != null && samePlanningRecordId(r.id, excludeId)) continue;
+    if (planningStructuralKey(r) !== sk) continue;
+
+    if (planningExactFingerprint(candidate) === planningExactFingerprint(r)) {
+      return "Ya existe una campaña idéntica (misma configuración y mismas fechas de inicio y fin).";
+    }
+
+    if (!planningTipoAlcance(t) && dateRangesOverlap(candidate.fechaInicio, candidate.fechaFin, r.fechaInicio, r.fechaFin)) {
+      return "El rango de fechas se cruza con otra campaña equivalente (mismo tipo, programa, plataforma, intake y tracking). Separa los periodos o diferencia algún campo clave.";
+    }
+  }
+
+  return "";
 }
 
 function validateCandidateForm(candidate, excludeId) {
@@ -3555,21 +4072,13 @@ function validateCandidateForm(candidate, excludeId) {
     showFormError(`La fecha de inicio debe ser ${minStartStr} o posterior (después del último rango existente para este programa).`);
     return false;
   }
-  if (planningTipoCharlaOWebinar(candidate.tipo)) {
-    if (hasCharlaWebinarMismaConfigSolapeFechas(candidate, excludeId)) {
-      showFormError(
-        "Ya existe una campaña de este tipo con la misma configuración en ese rango de fechas. Verifica las fechas."
-      );
-      return false;
-    }
-  } else if (isDuplicateRecord(candidate, excludeId)) {
-    showFormError("Ya existe un registro con el mismo tipo, programa, intake, tracking y plataforma.");
+
+  const integMsg = getPlanningRecordIntegrityConflictMessage(candidate, excludeId);
+  if (integMsg) {
+    showFormError(integMsg);
     return false;
   }
-  if (hasIntakeDateOverlap(candidate, excludeId)) {
-    showFormError("Las fechas se cruzan con otro intake del mismo tipo, programa, tracking y plataforma.");
-    return false;
-  }
+
   return true;
 }
 
@@ -4051,7 +4560,7 @@ function openModalForEdit(record) {
 
   populateCentroCostoSelect();
   const selCc = document.getElementById("centroCostoSelect");
-  if (selCc) selCc.value = normalizeCentroCostoSelectionValue(record.centroCostoId || "");
+  if (selCc) selCc.value = planningRecordCanonicalCentroId(record) || "";
   updateCentroCostoSaldoHint();
 }
 
@@ -4070,6 +4579,10 @@ newCampaignBtn?.addEventListener("click", () => {
 });
 
 document.getElementById("planningExportTableBtn")?.addEventListener("click", () => exportPlanningTableToExcel());
+
+document.getElementById("planningSanitizeDuplicatesBtn")?.addEventListener("click", () => {
+  void confirmSanitizePlanningDuplicatesFromToolbar();
+});
 
 editRecordBtn?.addEventListener("click", () => {
   if (!selectedRecordId) return;
@@ -4264,14 +4777,13 @@ function showCcReassignDialog(excludeCcId) {
 
     const seen = new Set();
     sel.innerHTML = centrosCostos
-      .filter((c) => String(c.id) !== String(excludeCcId))
+      .filter((c) => rowBelongsToCurrentTeam(c) && String(c.id) !== String(excludeCcId))
       .map((c) => {
-        const key = getCentroCostoKey(c);
-        if (!key || seen.has(key)) return "";
-        seen.add(key);
-        const extra = String(c.nombreProyecto || "").trim();
-        const label = extra ? `${key} (${extra})` : key;
-        return `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
+        const id = String(c.id);
+        if (!id || seen.has(id)) return "";
+        seen.add(id);
+        const label = getCentroCostoDisplayName(c) || id;
+        return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
       })
       .filter(Boolean)
       .join("");
@@ -4279,7 +4791,7 @@ function showCcReassignDialog(excludeCcId) {
     if (!sel.options.length) {
       void showAppDialog({
         message:
-          "No hay otro centro de costos con agrupador definido. Agrega uno antes de eliminar y reasignar las campañas.",
+          "No hay otro centro de costos disponible. Crea otro centro antes de eliminar y reasignar las campañas.",
         showSecondary: false,
         primaryText: "Entendido"
       });
@@ -4548,6 +5060,7 @@ campaignForm?.addEventListener("submit", (event) => {
 
       pr[idx] = {
         ...prev,
+        centroCosto: ccVal,
         centroCostoId: ccVal
       };
       diffPlanningRecordForAudit(String(editingRecordId), prev, pr[idx]);
@@ -4585,9 +5098,9 @@ campaignForm?.addEventListener("submit", (event) => {
     };
 
     if (!validateCandidateForm(candidate, null)) return;
-    if (!validateCentroCostoPresupuesto(values.centroCostoId, values.totalBudget, null)) return;
+    if (!validateCentroCostoPresupuesto(values.centroCosto, values.totalBudget, null)) return;
 
-    if (!values.centroCostoId) {
+    if (!values.centroCosto) {
       const continuar = await showAppDialog({
         message: "No se ha seleccionado un Centro de Costos. ¿Deseas continuar?",
         primaryText: "Continuar",
@@ -4611,7 +5124,8 @@ campaignForm?.addEventListener("submit", (event) => {
       fechaFin: candidate.fechaFin,
       tracking: candidate.tracking,
       plataforma: candidate.plataforma,
-      centroCostoId: normalizeCentroCostoSelectionValue(values.centroCostoId || ""),
+      centroCosto: normalizeCentroCostoSelectionValue(values.centroCosto || ""),
+      centroCostoId: normalizeCentroCostoSelectionValue(values.centroCosto || ""),
       presupuesto: values.totalBudget,
       leads: planningTipoAlcance(candidate.tipo) ? 0 : values.targetLeads,
       metas: {
@@ -4894,11 +5408,16 @@ planningBody?.addEventListener("dblclick", (event) => {
     const records = ensurePlanningDraftShape().records;
     const idx = records.findIndex((r) => samePlanningRecordId(r?.id, recordIdRaw));
     if (idx < 0) return;
-    const rec = records[idx];
-    const beforeAudit = JSON.parse(JSON.stringify(rec));
-    apply(rec, idx);
-    diffPlanningRecordForAudit(recordIdRaw, beforeAudit, JSON.parse(JSON.stringify(records[idx])));
-    console.log("Registro actualizado:", records[idx]);
+    const rollback = JSON.parse(JSON.stringify(records[idx]));
+    apply(records[idx], idx);
+    const conflict = getPlanningRecordIntegrityConflictMessage(records[idx], recordIdRaw);
+    if (conflict) {
+      records[idx] = rollback;
+      rebuildPlanningTable();
+      showCampatrackToast(conflict, "error");
+      return;
+    }
+    diffPlanningRecordForAudit(recordIdRaw, rollback, JSON.parse(JSON.stringify(records[idx])));
     if (opts.planningRowRefreshRecord) replacePlanningRowElement(records[idx]);
     else rebuildPlanningTable();
     persistPlanningData();
@@ -5051,11 +5570,13 @@ planningBody?.addEventListener("dblclick", (event) => {
 
 hydratarProgramas();
 const planningIdsRepaired = hydratarPlanningData();
-planningDraftRecords().forEach((r) => {
-  if (r.centroCostoId === undefined || r.centroCostoId === null) r.centroCostoId = "";
-  r.centroCostoId = normalizeCentroCostoSelectionValue(r.centroCostoId);
-});
 hydratarCentrosCostos();
+ensureCentrosCostosRowsFromPlanningAssignments();
+planningDraftRecords().forEach((r) => {
+  const canon = normalizeCentroCostoSelectionValue(planningRecordCentroRefRaw(r));
+  r.centroCosto = canon;
+  r.centroCostoId = canon;
+});
 syncCentroCostosYConsumoDesdePlanning();
 if (planningIdsRepaired) persistPlanningData({ fromBootstrap: true });
 rebuildPlanningTable();
@@ -6268,7 +6789,6 @@ const EXPORT_BUNDLE_KEYS = [
   "cc_data",
   "planning_data",
   "catalogos_sistema",
-  "consumo_por_campaña",
   "programs",
   "bitacora_data",
   "data_general",
@@ -6319,7 +6839,6 @@ function construirSnapshotDesdeLocalStorageComoExport() {
     cc_data: appState.dataDraft?.cc_data ?? leerJsonLocalStorage(LS_CC_DATA, "centros_costos"),
     planning_data: leerJsonLocalStorage(LS_PLANNING_DATA, "planningData"),
     catalogos_sistema: leerJsonLocalStorage(LS_CATALOGOS_SISTEMA),
-    consumo_por_campaña: mergeConsumoForPersist(),
     programs: JSON.parse(JSON.stringify(programs)),
     bitacora_data: bitacoraSnap,
     data_general: serializeDataReal(ensureDataGeneralDraftShape()),
@@ -10925,10 +11444,22 @@ function dashCplRealLeadsPeriodClass(metaCpl, cplReal) {
   return "dash-cpl-real-mes-bad";
 }
 
+/**
+ * Semáforo texto/fondo para % Avance Real vs % ideal (Planning en fecha).
+ * Leads: misma regla que muestra la tabla — `dashFmtPct` redondea puntos porcentuales con `Math.round(ratio * 100)`;
+ * verde si el entero mostrado de real ≥ el de ideal (16 % vs 16 % → cumplido).
+ * Gasto: verde si no sobrepaso material vs ideal (margen histórico 2 %) sobre ratios.
+ */
+function dashPctPointsFromDashboardRatio(r) {
+  return Math.round(Number(r) * 100);
+}
+
 function dashSemMetaG1(pctIdeal, pctReal, kind) {
   if (!Number.isFinite(pctIdeal) || !Number.isFinite(pctReal)) return "";
   if (kind === "leads") {
-    return pctReal >= pctIdeal * 0.98 ? "dash-sem-good" : "dash-sem-bad";
+    const idealPts = dashPctPointsFromDashboardRatio(pctIdeal);
+    const realPts = dashPctPointsFromDashboardRatio(pctReal);
+    return realPts >= idealPts ? "dash-sem-good" : "dash-sem-bad";
   }
   return pctReal <= pctIdeal * 1.02 ? "dash-sem-good" : "dash-sem-bad";
 }
@@ -13620,7 +14151,7 @@ function buildCampatrackSystemAdminSession(selectedTeamId) {
 
 const CAMPATRACK_TOPBAR_META = {
   dashboard: { title: "Dashboard", sub: "Resumen de desempeño, presupuesto y rendimiento", icon: "fa-chart-pie" },
-  costos: { title: "Centro de costos", sub: "Presupuestos (bolsas) y consumo vinculado al Planning.", icon: "fa-wallet" },
+  costos: { title: "Centro de costos", sub: "Bolsas de presupuesto derivadas del Planning.", icon: "fa-wallet" },
   planning: { title: "Planning", sub: "Planificación y calendario de campañas.", icon: "fa-calendar-days" },
   bitacora: { title: "Bitácora", sub: "Registro de actividades y seguimiento.", icon: "fa-clipboard-list" },
   data: { title: "Data", sub: "Carga, visualización y preparación de data real", icon: "fa-database" },
@@ -13632,7 +14163,7 @@ const CAMPATRACK_TOPBAR_META = {
 };
 
 const CAMPATRACK_REGISTER_MODULE_CARDS = [
-  { id: "costos", label: "Centro de costos", desc: "Presupuestos y consumo", icon: "fa-wallet", tone: "blue" },
+  { id: "costos", label: "Centro de costos", desc: "Presupuestos por bolsa", icon: "fa-wallet", tone: "blue" },
   { id: "planning", label: "Planning", desc: "Calendario y planificación", icon: "fa-calendar-days", tone: "purple" },
   { id: "bitacora", label: "Bitácora", desc: "Actividades y notas", icon: "fa-clipboard-list", tone: "green" },
   { id: "data", label: "Data", desc: "Tablas de campañas", icon: "fa-table", tone: "orange" },
@@ -15396,44 +15927,44 @@ function initCampatrackLogin() {
 }
 
 function initTabs() {
-  const tabCentroCostos = document.getElementById("tabCentroCostos");
   const tabPlanning = document.getElementById("tabPlanning");
   const tabBitacora = document.getElementById("tabBitacora");
   const tabData = document.getElementById("tabData");
   const tabRelaciones = document.getElementById("tabRelaciones");
   const tabMedidas = document.getElementById("tabMedidas");
   const tabDashboard = document.getElementById("tabDashboard");
+  const tabCentroCostos = document.getElementById("tabCentroCostos");
   const tabReporteAnuncios = document.getElementById("tabReporteAnuncios");
   const tabUsuarios = document.getElementById("tabUsuarios");
   const tabAuditoria = document.getElementById("tabAuditoria");
-  const costCenterModule = document.getElementById("costCenterModule");
   const planningModule = document.getElementById("planningModule");
   const bitacoraModule = document.getElementById("bitacoraModule");
   const dataModule = document.getElementById("dataModule");
   const relacionesModule = document.getElementById("relacionesModule");
   const medidasModule = document.getElementById("medidasModule");
   const dashboardModule = document.getElementById("dashboardModule");
+  const costCenterModule = document.getElementById("costCenterModule");
   const adsReportModule = document.getElementById("adsReportModule");
   const usersModule = document.getElementById("usersModule");
   const auditoriaModule = document.getElementById("auditoriaModule");
   if (
-    !tabCentroCostos ||
     !tabPlanning ||
     !tabBitacora ||
     !tabData ||
     !tabRelaciones ||
     !tabMedidas ||
     !tabDashboard ||
+    !tabCentroCostos ||
     !tabReporteAnuncios ||
     !tabUsuarios ||
     !tabAuditoria ||
-    !costCenterModule ||
     !planningModule ||
     !bitacoraModule ||
     !dataModule ||
     !relacionesModule ||
     !medidasModule ||
     !dashboardModule ||
+    !costCenterModule ||
     !adsReportModule ||
     !usersModule ||
     !auditoriaModule
@@ -15444,7 +15975,6 @@ function initTabs() {
     const role = getCampatrackRole();
     const visibility = getCampatrackModuleVisibilitySet();
     const roleTabs = getAllowedCampatrackModules(role);
-    const canAccessCostos = visibility.has("costos");
     const canAccessPlanning = visibility.has("planning");
     const canAccessBitacora = visibility.has("bitacora");
     const canAccessData = visibility.has("data");
@@ -15452,15 +15982,16 @@ function initTabs() {
     const canAccessMedidas = visibility.has("medidas");
     const canAccessDashboard = visibility.has("dashboard");
     const canAccessAdsReport = visibility.has("ads-report");
+    const canAccessCostos = visibility.has("costos");
     const canAccessUsuarios = roleTabs.has("usuarios");
     const canAccessAuditoria = visibility.has("auditoria");
-    tabCentroCostos.classList.toggle("hidden", !canAccessCostos);
     tabPlanning.classList.toggle("hidden", !canAccessPlanning);
     tabBitacora.classList.toggle("hidden", !canAccessBitacora);
     tabData.classList.toggle("hidden", !canAccessData);
     tabRelaciones.classList.toggle("hidden", !canAccessRelaciones);
     tabMedidas.classList.toggle("hidden", !canAccessMedidas);
     tabDashboard.classList.toggle("hidden", !canAccessDashboard);
+    tabCentroCostos.classList.toggle("hidden", !canAccessCostos);
     tabReporteAnuncios.classList.toggle("hidden", !canAccessAdsReport);
     tabUsuarios.classList.toggle("hidden", !canAccessUsuarios);
     tabAuditoria.classList.toggle("hidden", !canAccessAuditoria);
@@ -15479,36 +16010,33 @@ function initTabs() {
     console.log("Relaciones actuales (antes cambio módulo):", appState.dataDraft.relaciones);
     applyRoleVisibility();
     const safeModule = isCampatrackModuleAllowed(which) ? which : "dashboard";
-    const isCostos = safeModule === "costos";
     const isPlanning = safeModule === "planning";
     const isBitacora = safeModule === "bitacora";
     const isData = safeModule === "data";
     const isAuditoria = safeModule === "auditoria";
-    costCenterModule.classList.toggle("hidden", !isCostos);
+    const isCostos = safeModule === "costos";
     planningModule.classList.toggle("hidden", !isPlanning);
     bitacoraModule.classList.toggle("hidden", !isBitacora);
     dataModule.classList.toggle("hidden", !isData);
     relacionesModule.classList.toggle("hidden", safeModule !== "relaciones");
     medidasModule.classList.toggle("hidden", safeModule !== "medidas");
     dashboardModule.classList.toggle("hidden", safeModule !== "dashboard");
+    costCenterModule.classList.toggle("hidden", !isCostos);
     adsReportModule.classList.toggle("hidden", safeModule !== "ads-report");
     usersModule.classList.toggle("hidden", safeModule !== "usuarios");
     auditoriaModule.classList.toggle("hidden", !isAuditoria);
-    tabCentroCostos.classList.toggle("tab-active", isCostos);
     tabPlanning.classList.toggle("tab-active", isPlanning);
     tabBitacora.classList.toggle("tab-active", isBitacora);
     tabData.classList.toggle("tab-active", isData);
     tabRelaciones.classList.toggle("tab-active", safeModule === "relaciones");
     tabMedidas.classList.toggle("tab-active", safeModule === "medidas");
     tabDashboard.classList.toggle("tab-active", safeModule === "dashboard");
+    tabCentroCostos.classList.toggle("tab-active", isCostos);
     tabReporteAnuncios.classList.toggle("tab-active", safeModule === "ads-report");
     tabUsuarios.classList.toggle("tab-active", safeModule === "usuarios");
     tabAuditoria.classList.toggle("tab-active", isAuditoria);
     if (typeof updateAppTopbarForModule === "function") {
       updateAppTopbarForModule(safeModule);
-    }
-    if (safeModule === "costos") {
-      syncCentroCostosYConsumoDesdePlanning();
     }
     if (isBitacora) {
       if (typeof refreshBitacoraFormProgramaOptions === "function") refreshBitacoraFormProgramaOptions();
@@ -15562,6 +16090,14 @@ function initTabs() {
         console.warn("rebuildAuditoriaTable", e);
       }
     }
+    if (isCostos) {
+      try {
+        syncConsumoFromRecords();
+        refreshCentroCostosUI();
+      } catch (e) {
+        console.warn("Centro de costos: refresco desde Planning", e);
+      }
+    }
     if (isData) {
       actualizarFiltrosCache();
       refreshFechaFiltersUI();
@@ -15572,13 +16108,13 @@ function initTabs() {
     console.log("Relaciones actuales (después cambio módulo):", appState.dataDraft.relaciones);
   };
 
-  tabCentroCostos.addEventListener("click", () => setActive("costos"));
   tabPlanning.addEventListener("click", () => setActive("planning"));
   tabBitacora.addEventListener("click", () => setActive("bitacora"));
   tabData.addEventListener("click", () => setActive("data"));
   tabRelaciones.addEventListener("click", () => setActive("relaciones"));
   tabMedidas.addEventListener("click", () => setActive("medidas"));
   tabDashboard.addEventListener("click", () => setActive("dashboard"));
+  tabCentroCostos.addEventListener("click", () => setActive("costos"));
   tabReporteAnuncios.addEventListener("click", () => setActive("ads-report"));
   tabUsuarios.addEventListener("click", () => setActive("usuarios"));
   tabAuditoria.addEventListener("click", () => setActive("auditoria"));
@@ -15588,7 +16124,7 @@ function initTabs() {
   if (isCampatrackAuthenticated()) {
     setActive("dashboard");
   } else {
-    setActive("costos");
+    setActive("dashboard");
   }
 }
 
@@ -15764,8 +16300,6 @@ initCampatrackLogin();
 initBitacoraModule();
 initExportImportDatos();
 initCampaignPreviewBudgetEdit();
-initCentroCostosModule();
-initCentroCostosTabs();
 initDataSubTabs();
 initDataLoadModal();
 initDataErrorModal();
@@ -15776,6 +16310,8 @@ initDashboardModule();
 initAdsReportModule();
 initUsuariosModule();
 initAuditoriaModule();
+initCentroCostosModule();
+initCentroCostosTabs();
 limpiarFiltrosUiDataGeneral();
 actualizarFiltrosCache();
 refreshFechaFiltersUI();
@@ -15830,6 +16366,7 @@ export {
   beginEditAnuncioLinkCell,
   bitacoraRowPasaFiltros,
   bootstrapCampatrackAuthShell,
+  buildCostCenterMonthlyBreakdownFromPlanning,
   buildDataAgrupadaConTiempo,
   buildRecordRow,
   calcularScore,
@@ -15852,6 +16389,7 @@ export {
   combinarDetalleCargaReport,
   commitProgramDraftFromEditor,
   commitTotalBudgetManualEdit,
+  confirmSanitizePlanningDuplicatesFromToolbar,
   compressImageFileToDataUrlMaxBytes,
   computeDashboardDiasGastoDiarioRealMes,
   computeDashboardMetaGlobalDynamicDiaria,
@@ -15922,6 +16460,7 @@ export {
   eliminarFilasSeleccionadas,
   eliminarFilasSeleccionadasAnuncios,
   ensureCatalogosSistemaShape,
+  ensureCentrosCostosRowsFromPlanningAssignments,
   ensureDashboardInitialMonth,
   ensureMedidasDefaults,
   ensurePlanningRecordsHaveStableUniqueIds,
@@ -16008,6 +16547,7 @@ export {
   getPlanningGroups,
   getPlanningKeysForCplHistoricoForm,
   getPlanningRecordConsumedInvestment,
+  getPlanningRecordIntegrityConflictMessage,
   getPlanningUniqueIntakes,
   getProgramsByType,
   getRecordsLinkedToCentroCostoRow,
@@ -16074,6 +16614,7 @@ export {
   mergeDataAnuncioPreservingId,
   mergeDataRowPreservingId,
   mergeFuentesEnCatalogosSistema,
+  mergePlanningDraftIntoMergeCache,
   migrateLegacyDataAdsReportToAnuncios,
   modeloRowFechaEnRangoCampania,
   monthlyArraysFromDistribucionMensual,
@@ -16123,6 +16664,9 @@ export {
   persistRelacionesState,
   planningExportFilename,
   planningKeyFromRecord,
+  planningRecordsForCostCenterBreakdown,
+  planningExactFingerprint,
+  planningStructuralKey,
   planningTipoAlcance,
   planningTipoCharlaOWebinar,
   planningTipoSinRestriccionCruceFechas,
@@ -16146,6 +16690,8 @@ export {
   refreshPlanningToolbarFilterCombos,
   refreshProgramaFilterList,
   refreshSegmentadoresValues,
+  runResetCompletoCentroCostosParaEquipoActual,
+  sanitizeStructuralDuplicatePlanningRows,
   REGENERAR_MODELO,
   renderAdsReportModule,
   renderAdsReportTabla,

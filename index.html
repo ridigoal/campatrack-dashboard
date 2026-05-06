@@ -139,11 +139,11 @@
     <nav id="campatrackSidebarNav" class="campatrack-sidebar-nav" aria-label="Módulos">
       <button id="tabDashboard" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-chart-pie campatrack-side-ico" aria-hidden="true"></i><span>Dashboard</span></button>
       <button id="tabPlanning" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-calendar-days campatrack-side-ico" aria-hidden="true"></i><span>Planning</span></button>
+      <button id="tabCentroCostos" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-wallet campatrack-side-ico" aria-hidden="true"></i><span>Centro de costos</span></button>
       <button id="tabData" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-table campatrack-side-ico" aria-hidden="true"></i><span>Data</span></button>
       <button id="tabRelaciones" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-diagram-project campatrack-side-ico" aria-hidden="true"></i><span>Relaciones</span></button>
       <button id="tabMedidas" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-ruler-combined campatrack-side-ico" aria-hidden="true"></i><span>Medidas</span></button>
       <button id="tabReporteAnuncios" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-bullhorn campatrack-side-ico" aria-hidden="true"></i><span>Reporte de anuncios</span></button>
-      <button id="tabCentroCostos" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-wallet campatrack-side-ico" aria-hidden="true"></i><span>Centro de costos</span></button>
       <button id="tabBitacora" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-clipboard-list campatrack-side-ico" aria-hidden="true"></i><span>Bitácora</span></button>
       <button id="tabAuditoria" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-clipboard-check campatrack-side-ico" aria-hidden="true"></i><span>Auditoría</span></button>
       <button id="tabUsuarios" class="tab campatrack-side-nav-item" type="button"><i class="fa-solid fa-users campatrack-side-ico" aria-hidden="true"></i><span>Usuarios</span></button>
@@ -198,131 +198,6 @@
     </div>
   </header>
   <input id="importDataFileInput" class="hidden" type="file" accept="application/json,.json" aria-hidden="true" />
-
-  <section id="costCenterModule" class="cc-module cc-module-saas" aria-label="Centro de costos">
-    <div class="cc-saas-inner">
-      <div class="cc-module-actions-bar" role="toolbar" aria-label="Acciones de centro de costos">
-        <div class="cc-page-actions-saas">
-          <button id="ccAddRowBtn" type="button" class="cc-btn cc-btn-primary">
-            <i class="fa-solid fa-plus" aria-hidden="true"></i> Agregar centro de costo
-          </button>
-          <button id="ccEditRowBtn" type="button" class="cc-btn cc-btn-outline">
-            <i class="fa-solid fa-pen" aria-hidden="true"></i> Editar
-          </button>
-          <button id="ccExportBtn" type="button" class="cc-btn cc-btn-outline">
-            <i class="fa-solid fa-download" aria-hidden="true"></i> Exportar
-          </button>
-          <div class="cc-dropdown cc-header-more-dd">
-            <button type="button" class="cc-btn cc-btn-icon cc-more-actions-btn" id="ccMoreActionsBtn" aria-haspopup="true" aria-expanded="false" aria-label="Más acciones" title="Más acciones">
-              <i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
-            </button>
-            <div class="cc-dropdown-panel" id="ccMoreActionsPanel" role="menu" hidden>
-              <button type="button" class="cc-dropdown-item cc-dropdown-item--danger" id="ccMoreDeleteBtn" role="menuitem" disabled>Eliminar centro seleccionado</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="cc-kpi-grid" role="region" aria-label="Indicadores de centro de costos">
-        <article class="cc-kpi-card cc-kpi-card--primary">
-          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-wallet"></i></span>
-          <span class="cc-kpi-label">Presupuesto total</span>
-          <span class="cc-kpi-value" id="ccKpiPresupuestoTotal">$0</span>
-          <span class="cc-kpi-sub" id="ccKpiPresupuestoSub">100% del presupuesto planificado</span>
-          <div class="cc-kpi-progress cc-kpi-progress--blue" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarPresupuesto" style="width:100%"></span></div>
-        </article>
-        <article class="cc-kpi-card">
-          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-dollar-sign"></i></span>
-          <span class="cc-kpi-label">Inversión usada</span>
-          <span class="cc-kpi-value" id="ccKpiInversionUsada">$0</span>
-          <span class="cc-kpi-sub" id="ccKpiInversionUsadaSub">0% del presupuesto</span>
-          <div class="cc-kpi-progress cc-kpi-progress--green" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarUsada" style="width:0%"></span></div>
-        </article>
-        <article class="cc-kpi-card">
-          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-piggy-bank"></i></span>
-          <span class="cc-kpi-label">Saldo disponible</span>
-          <span class="cc-kpi-value" id="ccKpiSaldo">$0</span>
-          <span class="cc-kpi-sub" id="ccKpiSaldoSub">0% disponible</span>
-          <div class="cc-kpi-progress cc-kpi-progress--orange" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarSaldo" style="width:0%"></span></div>
-        </article>
-        <article class="cc-kpi-card">
-          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></span>
-          <span class="cc-kpi-label">% Ejecución</span>
-          <span class="cc-kpi-value" id="ccKpiEjecucionPct">0%</span>
-          <span class="cc-kpi-sub">vs presupuesto total</span>
-          <div class="cc-kpi-progress cc-kpi-progress--purple" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarEjecucion" style="width:0%"></span></div>
-        </article>
-        <article class="cc-kpi-card cc-kpi-card--risk">
-          <span class="cc-kpi-icon cc-kpi-icon--risk" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
-          <span class="cc-kpi-label">Centros en riesgo</span>
-          <span class="cc-kpi-value" id="ccKpiCentrosRiesgo">0</span>
-          <span class="cc-kpi-sub cc-kpi-sub--risk">Más del 90% consumido</span>
-        </article>
-      </div>
-
-      <article class="cc-card-table table-card">
-        <div class="cc-table-scroll cc-table-scroll--saas">
-          <table class="cc-table cc-table--saas" id="ccMainTable">
-            <thead>
-              <tr>
-                <th>Agrupador</th>
-                <th>Descripción del servicio / item</th>
-                <th>Inversión total</th>
-                <th>Inversión usada</th>
-                <th>Saldo</th>
-                <th>% usado</th>
-                <th>Estado</th>
-                <th class="cc-th-actions">Acciones</th>
-              </tr>
-            </thead>
-            <tbody id="ccMainBody"></tbody>
-          </table>
-        </div>
-      </article>
-
-      <div class="cc-analytics-stack" id="ccAnalysisSection" aria-label="Inversión mensual desde Planning">
-        <article class="cc-analytic-card cc-ps-theme-tipo" id="cc-analysis-tipo" aria-labelledby="ccAnalyticTipoHeading">
-          <header class="cc-analytic-card-head">
-            <h2 id="ccAnalyticTipoHeading" class="cc-analytic-card-title">
-              <i class="fa-solid fa-table" aria-hidden="true"></i> Por tipo – inversión mensual
-            </h2>
-          </header>
-          <div class="cc-analytic-table-scroll">
-            <table class="cc-planning-summary" id="ccResumenTipo" aria-label="Inversión mensual por tipo de campaña"></table>
-          </div>
-        </article>
-
-        <article class="cc-analytic-card cc-ps-theme-plataforma" id="cc-analysis-plat" aria-labelledby="ccAnalyticPlatHeading">
-          <header class="cc-analytic-card-head">
-            <h2 id="ccAnalyticPlatHeading" class="cc-analytic-card-title">
-              <i class="fa-solid fa-table" aria-hidden="true"></i> Por plataforma – inversión mensual
-            </h2>
-          </header>
-          <div class="cc-analytic-table-scroll">
-            <table class="cc-planning-summary" id="ccResumenPlataforma" aria-label="Inversión mensual por plataforma"></table>
-          </div>
-        </article>
-
-        <article class="cc-analytic-card cc-ps-theme-intake" id="cc-analysis-intake" aria-labelledby="ccAnalyticIntakeHeading">
-          <header class="cc-analytic-card-head">
-            <h2 id="ccAnalyticIntakeHeading" class="cc-analytic-card-title">
-              <i class="fa-solid fa-table" aria-hidden="true"></i> Por intake – inversión mensual
-            </h2>
-          </header>
-          <div class="cc-analytic-table-scroll">
-            <table class="cc-planning-summary" id="ccResumenIntake" aria-label="Inversión mensual por intake"></table>
-          </div>
-        </article>
-      </div>
-
-      <footer class="cc-module-foot">
-        <p class="cc-module-foot-note">Los datos mostrados provienen del Planning y se actualizan automáticamente al registrar nuevas campañas o modificar inversiones.</p>
-        <span class="cc-module-foot-time" id="ccModuleUpdatedAt"></span>
-      </footer>
-    </div>
-
-    <button type="button" id="ccDeleteRowBtn" class="hidden" disabled aria-hidden="true" tabindex="-1">Eliminar fila seleccionada</button>
-  </section>
 
   <section id="planningModule" class="hidden plan-module-saas">
     <div class="dashboard dashboard-saas">
@@ -416,6 +291,9 @@
         <button id="newCampaignBtn" type="button" class="btn-toolbar btn-primary btn-saas-primary"><i class="fa-solid fa-plus" aria-hidden="true"></i> Nueva campaña</button>
         <button id="planningImportTableBtn" type="button" class="btn-toolbar btn-saas-outline"><i class="fa-solid fa-file-import" aria-hidden="true"></i> Importar</button>
         <button id="planningExportTableBtn" type="button" class="btn-toolbar btn-saas-outline"><i class="fa-solid fa-file-export" aria-hidden="true"></i> Exportar</button>
+        <button id="planningSanitizeDuplicatesBtn" type="button" class="btn-toolbar btn-saas-outline" title="Elimina duplicados estructurales por merges antiguos o datos legacy">
+          <i class="fa-solid fa-broom" aria-hidden="true"></i> Limpiar duplicados…
+        </button>
         <button id="editRecordBtn" type="button" class="btn-toolbar btn-saas-outline" disabled>Editar</button>
         <button id="deleteRecordBtn" type="button" class="btn-toolbar btn-danger btn-saas-outline-danger" disabled>Eliminar</button>
       </div>
@@ -478,6 +356,153 @@
         </table>
       </div>
     </section>
+    </div>
+  </section>
+
+  <section id="costCenterModule" class="hidden cc-module-saas" aria-label="Centro de costos">
+    <div class="cc-saas-inner">
+      <header class="cc-header">
+        <h1>Centro de costos</h1>
+        <p class="cc-subtitle">
+          Bolsa presupuestaria por equipo. Solo se persisten nombre e inversión total; el uso y los desgloses se derivan del Planning en vivo.
+        </p>
+      </header>
+
+      <div class="cc-kpi-grid" role="region" aria-label="Resumen de bolsa">
+        <article class="cc-kpi-card cc-kpi-card--primary">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-sack-dollar"></i></span>
+          <span class="cc-kpi-label">Presupuesto bolsa</span>
+          <span class="cc-kpi-value" id="ccKpiPresupuestoTotal">$0</span>
+          <span class="cc-kpi-sub">Suma de presupuestos base por bolsa</span>
+          <div class="cc-kpi-progress cc-kpi-progress--purple" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarEjecucion" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-wallet"></i></span>
+          <span class="cc-kpi-label">Inversión usada</span>
+          <span class="cc-kpi-value" id="ccKpiInversionUsada">$0</span>
+          <span class="cc-kpi-sub" id="ccKpiInversionUsadaSub">0% del presupuesto</span>
+          <div class="cc-kpi-progress cc-kpi-progress--green" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarUsada" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-piggy-bank"></i></span>
+          <span class="cc-kpi-label">Saldo</span>
+          <span class="cc-kpi-value" id="ccKpiSaldo">$0</span>
+          <span class="cc-kpi-sub" id="ccKpiSaldoSub">0% disponible</span>
+          <div class="cc-kpi-progress cc-kpi-progress--orange" aria-hidden="true"><span class="cc-kpi-progress-bar" id="ccKpiBarSaldo" style="width:0%"></span></div>
+        </article>
+        <article class="cc-kpi-card">
+          <span class="cc-kpi-icon" aria-hidden="true"><i class="fa-solid fa-chart-pie"></i></span>
+          <span class="cc-kpi-label">Ejecución</span>
+          <span class="cc-kpi-value" id="ccKpiEjecucionPct">0%</span>
+          <span class="cc-kpi-sub">Uso agregado sobre bolsa total</span>
+        </article>
+        <article class="cc-kpi-card cc-kpi-card--risk">
+          <span class="cc-kpi-icon cc-kpi-icon--risk" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+          <span class="cc-kpi-label cc-kpi-sub--risk">Centros en riesgo</span>
+          <span class="cc-kpi-value" id="ccKpiCentrosRiesgo">0</span>
+          <span class="cc-kpi-sub">Más del 90% de la bolsa usada</span>
+        </article>
+      </div>
+
+      <div class="toolbar-row toolbar-row-saas planning-toolbar-saas" aria-label="Filtros centro de costos">
+        <div class="planning-filters-saas">
+          <label class="planning-filter-field">
+            <span class="planning-filter-label">Centro</span>
+            <select id="ccFilterAgrupador" class="planning-filter-control" aria-label="Filtrar tabla por centro">
+              <option value="">Todos</option>
+            </select>
+          </label>
+          <label class="planning-filter-field">
+            <span class="planning-filter-label">Estado</span>
+            <select id="ccFilterEstado" class="planning-filter-control" aria-label="Filtrar por nivel de uso">
+              <option value="">Todos</option>
+              <option value="riesgo">Riesgo (&gt;90%)</option>
+              <option value="ok">OK</option>
+            </select>
+          </label>
+          <label class="planning-filter-field">
+            <span class="planning-filter-label">Desglose desde</span>
+            <input id="ccFilterDesde" type="date" class="planning-filter-control" aria-label="Fecha desde para tablas de Planning" />
+          </label>
+          <label class="planning-filter-field">
+            <span class="planning-filter-label">Desglose hasta</span>
+            <input id="ccFilterHasta" type="date" class="planning-filter-control" aria-label="Fecha hasta para tablas de Planning" />
+          </label>
+          <button type="button" id="ccClearFiltersBtn" class="btn-toolbar btn-saas-outline"><i class="fa-solid fa-filter-circle-xmark" aria-hidden="true"></i> Limpiar filtros</button>
+        </div>
+      </div>
+
+      <div class="cc-module-actions-bar">
+        <div class="cc-page-actions-saas">
+          <button id="ccAddRowBtn" type="button" class="cc-btn cc-btn-primary"><i class="fa-solid fa-plus" aria-hidden="true"></i> Nuevo centro</button>
+          <button id="ccEditRowBtn" type="button" class="cc-btn cc-btn-outline"><i class="fa-solid fa-pen" aria-hidden="true"></i> Editar nombre</button>
+          <button id="ccDeleteRowBtn" type="button" class="cc-btn cc-btn-outline" disabled aria-disabled="true"><i class="fa-solid fa-trash" aria-hidden="true"></i> Eliminar</button>
+          <button id="ccExportBtn" type="button" class="cc-btn cc-btn-outline"><i class="fa-solid fa-file-export" aria-hidden="true"></i> Exportar CSV</button>
+          <div class="cc-dropdown cc-header-more-dd">
+            <button id="ccMoreActionsBtn" type="button" class="cc-btn cc-btn-outline cc-btn-icon" aria-expanded="false" aria-haspopup="true" title="Más acciones">
+              <i class="fa-solid fa-ellipsis-vertical" aria-hidden="true"></i>
+            </button>
+            <div id="ccMoreActionsPanel" class="cc-dropdown-panel" role="menu" hidden>
+              <button type="button" id="ccResetModuloBtn" class="cc-dropdown-item cc-dropdown-item--danger" role="menuitem">
+                Limpiar módulo desde cero…
+              </button>
+              <button type="button" id="ccMoreDeleteBtn" class="cc-dropdown-item cc-dropdown-item--danger" role="menuitem" disabled>Eliminar centro seleccionado</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="cc-bolsa-table-region" aria-label="Tabla principal de bolsas">
+        <div class="cc-card-table">
+          <div class="table-scroll cc-table-scroll cc-table-scroll--saas">
+            <table id="ccMainTable" class="cc-table cc-table--saas">
+              <thead>
+                <tr>
+                  <th scope="col">Nombre</th>
+                  <th scope="col" class="cc-th-total">Inversión total</th>
+                  <th scope="col" class="cc-th-total">Inversión usada</th>
+                  <th scope="col" class="cc-th-total">Saldo</th>
+                  <th scope="col">% usado</th>
+                  <th scope="col">% restante</th>
+                  <th scope="col">Estado</th>
+                  <th scope="col" class="cc-th-actions" aria-label="Acciones"></th>
+                </tr>
+              </thead>
+              <tbody id="ccMainBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="cc-planning-breakdown-region" aria-label="Desglose mensual por tipo, plataforma e intake (Planning)">
+        <div class="cc-planning-breakdown-head">
+          <h2 class="cc-planning-breakdown-title">Desglose desde Planning</h2>
+          <p class="cc-planning-breakdown-sub">Las tres tablas <strong>no</strong> tienen presupuesto propio: agrupan el mismo gasto de las campañas del Planning ligadas a cada bolsa. Los importes se reparten proporcionalmente por días en cada mes (columnas <strong>Ene–Dic</strong>); sin filtro de fechas, el total del desglose concuerda con el consumo reconocido contra la bolsa según esas campañas.</p>
+          <p id="ccAnalyticsScopeHint" class="cc-analytics-scope-hint cc-analytics-scope-hint--tight"></p>
+        </div>
+        <div class="cc-analytics-stack">
+          <article class="cc-analytic-card cc-ps-theme-tipo">
+            <div class="cc-analytic-table-scroll">
+              <table id="ccResumenTipo" class="cc-planning-summary cc-ps-theme-tipo" aria-label="Inversión mensual por tipo"></table>
+            </div>
+          </article>
+          <article class="cc-analytic-card cc-ps-theme-plataforma">
+            <div class="cc-analytic-table-scroll">
+              <table id="ccResumenPlataforma" class="cc-planning-summary cc-ps-theme-plataforma" aria-label="Inversión mensual por plataforma"></table>
+            </div>
+          </article>
+          <article class="cc-analytic-card cc-ps-theme-intake">
+            <div class="cc-analytic-table-scroll">
+              <table id="ccResumenIntake" class="cc-planning-summary cc-ps-theme-intake" aria-label="Inversión mensual por intake"></table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <footer class="cc-module-foot">
+        <p class="cc-module-foot-note">Las columnas calculadas (usada, saldo, porcentajes y tablas de desglose) se recalculan desde el Planning publicado; no se guardan como snapshot.</p>
+        <span id="ccModuleUpdatedAt" class="cc-module-foot-time" aria-live="polite"></span>
+      </footer>
     </div>
   </section>
 
@@ -1702,14 +1727,29 @@
   </div>
 
   <div id="campaignModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <div class="modal-content">
-      <h2 id="modalTitle">Registrar nueva campaña</h2>
+    <div class="modal-content campaign-modal-surface">
+      <header class="campaign-modal-header">
+        <div class="campaign-modal-header-main">
+          <div class="campaign-modal-icon" aria-hidden="true"><i class="fa-solid fa-bullhorn"></i></div>
+          <div class="campaign-modal-titles">
+            <h2 id="modalTitle">Registrar nueva campaña</h2>
+            <p id="f2q7kn" class="campaign-modal-subtitle">Completa la información para crear una nueva campaña</p>
+          </div>
+        </div>
+        <button type="button" class="campaign-modal-close" aria-label="Cerrar" onclick="document.getElementById('cancelBtn')?.click()">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </header>
+
       <p id="formError" class="form-error hidden" role="alert"></p>
-      <form id="campaignForm" class="campaign-form">
+
+      <form id="campaignForm" class="campaign-form campaign-form-modern">
         <div class="campaign-form-planning-full">
-        <div class="row-3">
-          <label>
-            Tipo de programa
+        <div class="row-3 campaign-planning-row campaign-planning-row-program">
+          <label class="campaign-field">
+            <span class="campaign-field-label">Tipo de programa</span>
+            <span class="campaign-field-control campaign-field-control--select">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-layer-group"></i></span>
             <select id="programType" name="programType" required>
               <option value="">Seleccionar tipo</option>
               <option value="MBA">MBA</option>
@@ -1722,33 +1762,42 @@
               <option value="Webinar">Webinar</option>
               <option value="Alcance">Alcance</option>
             </select>
+            </span>
           </label>
 
           <div class="program-combo">
-            <label>
-              Programa
+            <label class="campaign-field campaign-field--program-combo">
+              <span class="campaign-field-label">Programa</span>
+              <span class="campaign-field-control campaign-field-control--select">
+                <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-folder-open"></i></span>
               <select id="programName" name="programName" required disabled>
                 <option value="">Seleccionar programa</option>
               </select>
               <input id="programNameEdit" name="programNameEdit" type="text" class="hidden" placeholder="Escribe nuevo programa" autocomplete="off">
+              </span>
             </label>
             <div id="programDropdown" class="dropdown hidden" role="listbox" aria-label="Programas"></div>
           </div>
 
-          <button id="newProgramBtn" type="button" class="icon-btn" aria-label="Crear nuevo programa">+</button>
+          <button id="newProgramBtn" type="button" class="icon-btn campaign-new-program-btn" aria-label="Crear nuevo programa"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
         </div>
 
-        <div class="row-intake">
-          <label>
-            Tracking
+        <div class="row-intake campaign-planning-row-intake">
+          <label class="campaign-field">
+            <span class="campaign-field-label">Tracking</span>
+            <span class="campaign-field-control campaign-field-control--select">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span>
             <select id="tracking" name="tracking" required>
               <option value="">Seleccionar</option>
               <option value="Leadgen">Leadgen</option>
               <option value="Pixel">Pixel</option>
             </select>
+            </span>
           </label>
-          <label>
-            Plataforma
+          <label class="campaign-field">
+            <span class="campaign-field-label">Plataforma</span>
+            <span class="campaign-field-control campaign-field-control--select">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-display"></i></span>
             <select id="plataforma" name="plataforma" required>
               <option value="">Seleccionar</option>
               <option value="Meta">Meta</option>
@@ -1756,9 +1805,12 @@
               <option value="TikTok">TikTok</option>
               <option value="LinkedIn">LinkedIn</option>
             </select>
+            </span>
           </label>
-          <label>
-            Intake
+          <label class="campaign-field">
+            <span class="campaign-field-label">Intake</span>
+            <span class="campaign-field-control campaign-field-control--select">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-users"></i></span>
             <select id="intake" name="intake" required>
               <option value="">Seleccionar intake</option>
               <option value="Intake 1">Intake 1</option>
@@ -1766,56 +1818,85 @@
               <option value="Intake 3">Intake 3</option>
               <option value="Intake 4">Intake 4</option>
             </select>
+            </span>
           </label>
         </div>
 
-        <div class="row-intake-dates">
-          <label>
-            Fecha inicio
+        <div class="row-intake-dates campaign-planning-row-dates">
+          <label class="campaign-field">
+            <span class="campaign-field-label">Fecha inicio</span>
+            <span class="campaign-field-control campaign-field-control--date">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></span>
             <input id="startDate" name="startDate" type="date" required>
+            </span>
           </label>
-          <label>
-            Fecha fin
+          <label class="campaign-field">
+            <span class="campaign-field-label">Fecha fin</span>
+            <span class="campaign-field-control campaign-field-control--date">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></span>
             <input id="endDate" name="endDate" type="date" required disabled>
+            </span>
           </label>
         </div>
 
-        <div class="campaign-separator" aria-hidden="true"></div>
+        <div class="campaign-separator campaign-separator--soft" aria-hidden="true"></div>
 
-        <div class="row-budget-3 compact-row">
-          <label id="campaignTargetLeadsLabel">
-            Leads Obj.
-            <input id="targetLeads" name="targetLeads" type="number" min="0" step="1" required>
+        <div class="row-budget-3 compact-row campaign-metrics-modern">
+          <label id="campaignTargetLeadsLabel" class="campaign-field campaign-field--metric-input">
+            <span class="campaign-field-label">Leads Obj.</span>
+            <span class="campaign-field-control campaign-field-control--number">
+              <input id="targetLeads" name="targetLeads" type="number" min="0" step="1" required>
+            </span>
           </label>
 
           <div class="metric-separator" aria-hidden="true"></div>
 
-          <div class="cpl-metric-block">
-            <label id="campaignCplTargetLabel">
-              CPL Obj.
-              <input id="cplTarget" name="cplTarget" type="number" min="0" step="1">
+          <div class="cpl-metric-block campaign-cpl-cluster">
+            <label id="campaignCplTargetLabel" class="campaign-field campaign-field--metric-input">
+              <span class="campaign-field-label">CPL Obj.</span>
+              <span class="campaign-field-control campaign-field-control--number">
+                <input id="cplTarget" name="cplTarget" type="number" min="0" step="1">
+              </span>
             </label>
             <div id="cplHistoricoHint" class="hint cpl-historico-hint" role="status" aria-live="polite"></div>
           </div>
 
+          <div class="campaign-metrics-distrib-strip" aria-hidden="true">
+            <span class="campaign-metrics-distrib-cell"></span>
+            <span class="campaign-metrics-distrib-cell"></span>
+            <span class="campaign-metrics-distrib-cell"></span>
+            <span class="campaign-metrics-distrib-cell"></span>
+            <span class="campaign-metrics-distrib-cell campaign-metrics-distrib-cell--accent"></span>
+            <span class="campaign-metrics-distrib-cell campaign-metrics-distrib-cell--accent"></span>
+          </div>
+
           <div class="metric-separator" aria-hidden="true"></div>
 
-          <label>
-            Gasto Total
+          <label class="campaign-field campaign-field--metric-readonly">
+            <span class="campaign-field-label">Gasto Total</span>
+            <span class="campaign-money-box">
+              <span class="campaign-money-ico" aria-hidden="true"><i class="fa-solid fa-dollar-sign"></i></span>
             <input id="totalBudget" name="totalBudget" type="number" min="0" step="0.01" required readonly>
+            </span>
           </label>
 
-          <label>
-            Gasto Diario
+          <label class="campaign-field campaign-field--metric-readonly">
+            <span class="campaign-field-label">Gasto Diario</span>
+            <span class="campaign-money-box">
+              <span class="campaign-money-ico" aria-hidden="true"><i class="fa-solid fa-dollar-sign"></i></span>
             <input id="gastoDiario" name="gastoDiario" type="text" readonly>
+            </span>
           </label>
         </div>
 
-        <div class="preview-header">
-          <h3>Vista previa mensual</h3>
+        <div class="preview-header campaign-preview-toolbar">
+          <div class="campaign-preview-toolbar-left">
+            <h3>Vista previa mensual</h3>
+            <span class="campaign-preview-info-ico" aria-hidden="true"><i class="fa-solid fa-circle-info"></i></span>
+          </div>
+          <p id="percentHint" class="hint campaign-preview-stats">Modo automatico por dias activo.</p>
         </div>
-        <p id="percentHint" class="hint">Modo automatico por dias activo.</p>
-        <div class="preview-scroll">
+        <div class="preview-scroll campaign-preview-wrap">
           <table class="preview-table">
             <thead>
               <tr>
@@ -1829,22 +1910,30 @@
             </thead>
             <tbody id="previewBody"></tbody>
           </table>
+          <div class="campaign-preview-empty" aria-hidden="true">
+            <div class="campaign-preview-empty-illu"><i class="fa-solid fa-folder-open"></i></div>
+            <p class="campaign-preview-empty-title">Aún no hay distribución mensual</p>
+            <p class="campaign-preview-empty-copy">La vista previa se mostrará aquí cuando ingreses los datos.</p>
+          </div>
         </div>
         </div>
 
-        <div class="campaign-form-cc-section">
-          <label for="centroCostoSelect">
-            Centro de costo
+        <div class="campaign-form-cc-section campaign-cc-bar">
+          <label class="campaign-field" for="centroCostoSelect">
+            <span class="campaign-field-label">Centro de costo</span>
+            <span class="campaign-field-control campaign-field-control--select">
+              <span class="campaign-field-prefix" aria-hidden="true"><i class="fa-solid fa-building-columns"></i></span>
             <select id="centroCostoSelect" name="centroCosto">
               <option value="">Sin centro de costo</option>
             </select>
+            </span>
           </label>
           <p id="centroCostoSaldoHint" class="hint cc-saldo-hint" role="status"></p>
         </div>
 
-        <div class="modal-actions">
-          <button id="cancelBtn" type="button" class="btn-secondary">Cancelar</button>
-          <button type="submit">Guardar</button>
+        <div class="modal-actions campaign-modal-actions">
+          <button id="cancelBtn" type="button" class="btn-secondary campaign-btn-secondary"><i class="fa-solid fa-xmark" aria-hidden="true"></i><span>Cancelar</span></button>
+          <button type="submit" class="campaign-btn-primary"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i><span>Guardar campaña</span></button>
         </div>
       </form>
     </div>
